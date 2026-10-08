@@ -1,0 +1,101 @@
+{
+  "name": "dialdev",
+  "productName": "DialDev",
+  "version": "0.3.0",
+  "description": "A desktop SIP softphone for QA and interoperability testing.",
+  "author": "DialDev",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "desktop": "node scripts/dev.mjs",
+    "build": "tsc -b && vite build",
+    "start": "node scripts/start.mjs",
+    "icons": "node scripts/build-icons.mjs",
+    "test": "vitest run",
+    "package": "npm run build && electron-builder --dir",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --arm64 --publish never",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:linux": "npm run build && electron-builder --linux AppImage",
+    "test:native": "node tests/native.integration.cjs",
+    "test:transcriber": "node tests/transcriber.integration.cjs",
+    "native:build": "node scripts/build-native.mjs",
+    "native:transcriber": "node scripts/build-transcriber.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "sip.js": "0.21.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "typescript": "~5.9.3",
+    "vite": "8.3.3",
+    "vitest": "^4.0.0"
+  },
+  "build": {
+    "appId": "com.dialdev.app",
+    "productName": "DialDev",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native",
+        "to": "native",
+        "filter": [
+          "**/baresip",
+          "**/baresip.exe",
+          "**/dialdev-transcribe",
+          "LICENSE*",
+          "THIRD-PARTY*",
+          "licenses/**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "artifactName": "${productName}-${version}-macOS-${arch}.${ext}",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "DialDev uses your microphone for phone calls.",
+        "NSCameraUsageDescription": "DialDev uses your camera when you choose a video call."
+      },
+      "icon": "build/icon.icns",
+      "minimumSystemVersion": "14.0"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Network",
+      "icon": "build/icon.png"
+    },
+    "protocols": [
+      {
+        "name": "Telephone",
+        "schemes": [
+          "tel",
+          "sip"
+        ]
+      }
+    ]
+  }
+}

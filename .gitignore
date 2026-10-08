@@ -1,0 +1,15 @@
+node_modules/
+dist/
+release/
+.dist/
+test-results/
+playwright-report/
+*.log
+.DS_Store
+.env*
+*.tsbuildinfo
+build/icon.iconset/
+.vscode/
+.agents/
+.codex/
+.aws/

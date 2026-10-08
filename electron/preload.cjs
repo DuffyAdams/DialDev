@@ -1,0 +1,31 @@
+const { contextBridge, ipcRenderer } = require('electron');
+const listen = (channel, callback) => { const handler = (_, value) => callback(value); ipcRenderer.on(channel, handler); return () => ipcRenderer.removeListener(channel, handler); };
+contextBridge.exposeInMainWorld('desktop', {
+  platform: process.platform,
+  storageNamespace: process.argv.find(arg => arg.startsWith('--dialdev-storage='))?.split('=')[1] || 'dialdev',
+  sipConnect: (account, secret) => ipcRenderer.invoke('sip:connect', account, secret),
+  sipDisconnect: id => ipcRenderer.invoke('sip:disconnect', id),
+  sipAction: payload => ipcRenderer.invoke('sip:action', payload),
+  sipRecording: token => ipcRenderer.invoke('sip:recording', token),
+  transcriptionInfo: locale => ipcRenderer.invoke('transcribe:info', locale),
+  transcribeStart: (key, locale) => ipcRenderer.invoke('transcribe:start', key, locale),
+  transcribeAudio: (key, side, rate, pcm) => ipcRenderer.send('transcribe:audio', key, side, rate, pcm),
+  transcribeStop: key => ipcRenderer.invoke('transcribe:stop', key),
+  onSipEvent: callback => listen('sip:event', callback),
+  updateState: () => ipcRenderer.invoke('update:state'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  openRelease: () => ipcRenderer.send('update:open'),
+  onUpdate: callback => listen('update:state', callback),
+  getSecret: id => ipcRenderer.invoke('secret:get', id),
+  saveSecret: (id, secret) => ipcRenderer.invoke('secret:save', id, secret),
+  deleteSecret: id => ipcRenderer.invoke('secret:delete', id),
+  notify: (title, body) => ipcRenderer.send('notify', title, body),
+  onDial: callback => listen('dial', callback),
+  onNavigate: callback => listen('navigate', callback),
+  setCallActive: active => ipcRenderer.send('call:active', active),
+  setTheme: theme => ipcRenderer.send('theme:set', theme),
+  minimize: () => ipcRenderer.send('window:control', 'minimize'),
+  maximize: () => ipcRenderer.send('window:control', 'maximize'),
+  close: () => ipcRenderer.send('window:control', 'close')
+});

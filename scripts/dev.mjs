@@ -1,0 +1,10 @@
+import { spawn } from 'node:child_process';
+import { createServer } from 'vite';
+import { electronRuntime } from './electron-runtime.mjs';
+const electron = await electronRuntime();
+const server = await createServer({ server: { host: '127.0.0.1', port: 5173, strictPort: true } });
+await server.listen();
+const child = spawn(electron, ['.'], { stdio: 'inherit', env: { ...process.env, DIALDEV_DEV_URL: 'http://127.0.0.1:5173' } });
+child.on('exit', async code => { await server.close(); process.exit(code ?? 0); });
+child.on('error', async error => { console.error(error); await server.close(); process.exitCode = 1; });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
