@@ -158,7 +158,7 @@ export default function PhonePanel(p: Props) {
     : match ? <button type="button" className="dial-match" onClick={() => { p.setNumber(match.number); input.current?.focus(); }}><strong>{match.name}</strong>{match.number}</button>
     : p.ended ? <span className={`dial-notice ${failed ? 'failed' : ''}`}>{p.ended.direction === 'missed' ? `Missed call from ${p.ended.name}` : failed ? 'Call failed' : 'Call ended'}{p.ended.reason && (failed || /^[3-6]\d\d/.test(p.ended.reason)) ? ` · ${p.ended.reason}` : p.ended.duration ? ` · ${duration(p.ended.duration)}` : ''}</span>
     : !p.account ? <span className="dial-notice warning">No SIP account · dial {testLine.number} to try<button type="button" className="text-button" onClick={p.addAccount}>Add</button></span>
-    : !ready ? <span className="dial-notice warning"><TriangleAlert size={12} />{connection?.state === 'connecting' ? 'Registering…' : connection?.state === 'error' ? 'Registration failed' : 'Not registered'}{connection?.state !== 'connecting' && <button type="button" className="text-button" onClick={() => p.register(p.account!)}>{connection?.state === 'error' ? 'Retry' : 'Register'}</button>}</span>
+    : !ready ? <span className="dial-notice warning"><TriangleAlert size={12} />{connection?.state === 'connecting' ? connection.detail || 'Registering…' : connection?.state === 'error' ? 'Registration failed' : 'Not registered'}{connection?.state !== 'connecting' && <button type="button" className="text-button" onClick={() => p.register(p.account!)}>{connection?.state === 'error' ? 'Retry' : 'Register'}</button>}</span>
     : null;
   const canCall = ready || simulated(p.number, p.calls);
   return <section className="phone">{strip}<div className="screen-frame">

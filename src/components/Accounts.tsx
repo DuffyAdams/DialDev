@@ -6,8 +6,8 @@ import { IconButton, StatusDot, Switch, type MenuItem, type MenuState, menuAt } 
 
 export type AccountActions = { edit: (a: Account) => void; duplicate: (a: Account) => void; register: (a: Account) => void; unregister: (a: Account) => void; remove: (a: Account) => void; copyUri: (a: Account) => void };
 export function accountStatus(a: Account, c?: Connection): { state: Connection['state'] | 'disabled'; text: string } {
-  if (c?.state === 'registered') return { state: 'registered', text: `${a.username}@${a.domain}` };
-  if (c?.state === 'connecting') return { state: 'connecting', text: 'Registering…' };
+  if (c?.state === 'registered') return { state: 'registered', text: `${a.username}@${a.domain}${c.detail ? ` · ${c.detail}` : ''}` };
+  if (c?.state === 'connecting') return { state: 'connecting', text: c.detail || 'Registering…' };
   if (c?.state === 'error') return { state: 'error', text: c.detail || 'Registration failed' };
   if (!a.enabled) return { state: 'disabled', text: 'Off' };
   return { state: 'offline', text: c?.detail || 'Not registered' };

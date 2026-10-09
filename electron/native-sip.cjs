@@ -17,7 +17,7 @@ function validateAccount(a) {
 }
 function addressFor(a) {
   validateAccount(a);
-  return `<sip:${encodeURIComponent(a.username)}@${a.domain}:${a.port};transport=${a.transport}>;regint=300;answermode=manual;sip_autoanswer=no;dtmfmode=rtpevent;audio_codecs=opus/48000/2,pcmu/8000/1,pcma/8000/1${a.mediaEncryption === 'srtp' ? ';mediaenc=srtp-mand' : ''}${a.proxy ? `;outbound="${a.proxy}"` : ''}${a.stun ? `;medianat=stun;stunserver="${a.stun}"` : ''}`;
+  return `<sip:${encodeURIComponent(a.username)}@${a.domain}:${a.port};transport=${a.transport}>;regint=${a.outboundOnly ? 0 : 300};answermode=manual;sip_autoanswer=no;dtmfmode=rtpevent;audio_codecs=opus/48000/2,pcmu/8000/1,pcma/8000/1${a.mediaEncryption === 'srtp' ? ';mediaenc=srtp-mand' : ''}${a.proxy ? `;outbound="${a.proxy}"` : ''}${a.stun ? `;medianat=stun;stunserver="${a.stun}"` : ''}`;
 }
 function decodeFrames(buffer, receive) {
   while (buffer.length) {
@@ -46,7 +46,7 @@ class NativeSip {
     const port = await new Promise((resolve, reject) => { const server = net.createServer(); server.on('error', reject); server.listen(0, '127.0.0.1', () => { const p = server.address().port; server.close(() => resolve(p)); }); });
     const caFile = path.join(this.directory, 'trusted-ca.pem'); await fs.writeFile(caFile, tls.rootCertificates.join('\n'));
     const audio = this.test ? 'aufile' : process.platform === 'darwin' ? 'audiounit' : process.platform === 'win32' ? 'winwave' : 'pulse';
-    const config = [...(this.test ? ['net_interface 127.0.0.1', 'sip_listen 127.0.0.1:0'] : []), `sip_transports udp,tcp,tls`, `sip_verify_server yes`, `sip_cafile ${caFile}`, 'call_max_calls 5', 'call_hold_other_calls no', 'call_local_timeout 60', 'call_accept no', `audio_source ${this.test ? 'ausine,440' : audio + ',default'}`, `audio_player ${this.test ? 'aubridge,test' : audio + ',default'}`, `audio_alert ${audio},default`, 'ausrc_format s16', 'auplay_format s16', 'auenc_format s16', 'audec_format s16', 'audio_jitter_buffer_type adaptive', 'audio_jitter_buffer_ms 40-160', 'audio_buffer 20-160', 'rtp_stats no', 'ring_aufile none', 'ringback_aufile none', 'callwaiting_aufile none', 'message_sound no', 'sip_trace no', `ctrl_tcp_listen 127.0.0.1:${port}`, ...[audio, ...(this.test ? ['ausine', 'aubridge'] : []), 'aufile', 'g711', 'opus', 'uuid', 'stun', 'turn', 'ice', 'srtp', 'dtls_srtp', 'mixminus'].filter((x, i, list) => list.indexOf(x) === i).map(m => `module ${m}.so`), 'module_app menu.so', 'module_app dialdev.so', 'module_app mwi.so', 'module_app netroam.so', 'module_app ctrl_tcp.so'].join('\n') + '\n';
+    const config = [...(this.test ? ['net_interface 127.0.0.1', 'sip_listen 127.0.0.1:0'] : []), `sip_transports udp,tcp,tls`, `sip_verify_server yes`, `sip_cafile ${caFile}`, 'call_max_calls 5', 'call_hold_other_calls no', 'call_local_timeout 60', 'call_accept no', `audio_source ${this.test ? 'ausine,440' : audio + ',default'}`, `audio_player ${this.test ? 'aubridge,test' : audio + ',default'}`, `audio_alert ${audio},default`, 'ausrc_format s16', 'auplay_format s16', 'auenc_format s16', 'audec_format s16', 'audio_jitter_buffer_type adaptive', 'audio_jitter_buffer_ms 40-160', 'audio_buffer 20-160', 'rtp_stats no', 'ring_aufile none', 'ringback_aufile none', 'callwaiting_aufile none', 'message_sound no', 'sip_trace no', 'netroam_interval 5', `ctrl_tcp_listen 127.0.0.1:${port}`, ...[audio, ...(this.test ? ['ausine', 'aubridge'] : []), 'aufile', 'g711', 'opus', 'uuid', 'stun', 'turn', 'ice', 'srtp', 'dtls_srtp', 'mixminus'].filter((x, i, list) => list.indexOf(x) === i).map(m => `module ${m}.so`), 'module_app menu.so', 'module_app dialdev.so', 'module_app mwi.so', 'module_app netroam.so', 'module_app ctrl_tcp.so'].join('\n') + '\n';
     await fs.writeFile(path.join(this.directory, 'config'), config, { mode: 0o600 });
     this.child = spawn(this.binary, ['-f', this.directory], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DIALDEV_CTRL_TOKEN: this.auth, DIALDEV_REC_DIR: this.recordDir } });
     // Drain logs without storing caller information, credentials, or SIP traces.
@@ -82,7 +82,15 @@ class NativeSip {
     else if (frame.message) this.emit({ kind: 'message', accountId, peer: frame.from, body: frame.body });
     else this.emit({ kind: 'event', accountId, ...frame });
   }
-  async connect(a, secret) { validateAccount(a); await this.start(); if (this.accounts.has(a.id)) await this.disconnect(a.id); const expected = `sip:${encodeURIComponent(a.username)}@${a.domain}:${a.port}`; this.accounts.set(a.id, { ...a, expected }); this.emit({ kind: 'connection', accountId: a.id, state: 'connecting' }); try { const aor = await this.command({ action: 'connect', address: addressFor(a), password: secret.password, authUser: a.authUser || a.username, displayName: a.displayName || undefined }); const account = this.accounts.get(a.id); if (account) account.aor = aor; } catch (e) { this.accounts.delete(a.id); throw e; } }
+  /** Has the engine look for changed network addresses now (a VPN going up or down) instead of at its next poll, so retrying doesn't reuse sockets bound to an address that no longer exists. */
+  async refreshNetwork() { await this.request('netchange', '').catch(() => {}); }
+  async connect(a, secret) {
+    validateAccount(a); await this.start(); if (this.accounts.has(a.id)) await this.disconnect(a.id); await this.refreshNetwork();
+    const expected = `sip:${encodeURIComponent(a.username)}@${a.domain}:${a.port}`; this.accounts.set(a.id, { ...a, expected }); this.emit({ kind: 'connection', accountId: a.id, state: 'connecting' });
+    try { const aor = await this.command({ action: 'connect', address: addressFor(a), password: secret.password, authUser: a.authUser || a.username, displayName: a.displayName || undefined }); const account = this.accounts.get(a.id); if (account) account.aor = aor; } catch (e) { this.accounts.delete(a.id); throw e; }
+    // An outbound-only account sends no REGISTER, so no registration event will say it is ready.
+    if (a.outboundOnly) this.emit({ kind: 'connection', accountId: a.id, state: 'registered', detail: 'Outbound only' });
+  }
   async disconnect(id) { const a = this.accounts.get(id); if (!a) return; await this.command({ action: 'disconnect', aor: a.aor }); this.accounts.delete(id); this.emit({ kind: 'connection', accountId: id, state: 'offline' }); }
   async action(payload) {
     const actions = ['dial', 'answer', 'end', 'forward', 'hold', 'resume', 'mute', 'unmute', 'dtmf', 'transfer', 'attended', 'record', 'record-stop', 'transcribe', 'transcribe-stop', 'merge', 'split', 'message'];

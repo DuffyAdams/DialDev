@@ -57,6 +57,14 @@ const speech = async (directory, text) => { const file = path.join(directory, `$
     await wait(() => events.find(e => e.kind === 'message-status' && e.token === 'msg-ok' && e.status === 202), 'message accepted');
     await sip.action({ action: 'message', accountId: 'integration-account', to: `sip:200@127.0.0.1:${port}`, body: 'reject me', token: 'msg-fail' }); await wait(() => events.find(e => e.kind === 'message-status' && e.token === 'msg-fail' && e.status === 403), 'message rejected'); console.log('PASS SIP MESSAGE success and provider rejection');
     await sip.action({ action: 'end', call: id }); await wait(() => events.find(e => e.id === id && e.type === 'CALL_CLOSED'), 'hangup'); assert.ok(requests.some(r => r.method === 'BYE')); console.log('PASS BYE and call cleanup');
+    const registers = requests.filter(r => r.method === 'REGISTER').length;
+    await sip.connect({ id: 'outbound-account', name: 'Outbound only', username: '1002', authUser: '1002', domain: '127.0.0.1', port: String(port), transport: 'udp', proxy: '', stun: '', displayName: '', mediaEncryption: 'none', outboundOnly: true }, { password });
+    await wait(() => events.find(e => e.kind === 'connection' && e.accountId === 'outbound-account' && e.state === 'registered' && e.detail === 'Outbound only'), 'outbound-only account ready');
+    const outboundId = await sip.action({ action: 'dial', accountId: 'outbound-account', to: `sip:200@127.0.0.1:${port}` });
+    await wait(() => events.find(e => e.id === outboundId && e.type === 'CALL_ESTABLISHED'), 'outbound-only call established');
+    await sip.action({ action: 'end', call: outboundId }); await wait(() => events.find(e => e.id === outboundId && e.type === 'CALL_CLOSED'), 'outbound-only hangup');
+    await sip.disconnect('outbound-account'); await sip.refreshNetwork();
+    assert.equal(requests.filter(r => r.method === 'REGISTER').length, registers); console.log('PASS Outbound-only account calls without registering');
     const transcriber = new Transcriber({ binary: path.resolve('native/darwin-arm64/dialdev-transcribe'), directory: path.join(directory, 'recordings'), emit: e => events.push(e) });
     const info = await transcriber.info('en-US');
     if (!info.available) console.log(`SKIP Live transcription: ${info.reason}`);

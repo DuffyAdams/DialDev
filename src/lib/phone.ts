@@ -75,7 +75,7 @@ export class PhoneEngine {
     const previous = this.snapshot.connections[id];
     this.emit({ connections: { ...this.snapshot.connections, [id]: { state, detail } } });
     if (previous?.state === state && previous.detail === detail) return;
-    if (state === 'registered') this.log('success', 'Registered', id);
+    if (state === 'registered') this.log('success', detail ? `Ready · ${detail}` : 'Registered', id);
     else if (state === 'error') this.log('error', `Registration failed${detail ? `: ${detail}` : ''}`, id);
     else if (state === 'offline' && previous && previous.state !== 'offline') this.log('info', detail || 'Unregistered', id);
   }
@@ -112,7 +112,7 @@ export class PhoneEngine {
       const ua = new UserAgent({ uri, displayName: account.displayName, authorizationUsername: account.authUser || account.username, authorizationPassword: credentials.password, transportOptions: { server: account.server, connectionTimeout: 10, traceSip: false }, logBuiltinEnabled: false, logConfiguration: false, sessionDescriptionHandlerFactoryOptions: { peerConnectionConfiguration: { iceServers } }, delegate: {
         onInvite: invitation => { void this.incoming(account, invitation).catch(e => this.fail(e)); },
         onMessage: message => { void message.accept(); this.onMessage?.({ id: uid(), peer: message.request.from.uri.user || message.request.from.uri.toString(), body: message.request.body, incoming: true, time: Date.now(), status: 'received', accountId: account.id }); },
-        onDisconnect: () => this.connection(account.id, 'error', 'Connection lost. Re-register the account.')
+        onDisconnect: error => { if (error) this.reconnect(account.id); }
       } });
       const registerer = new Registerer(ua, { expires: 300, logConfiguration: false });
       const client: Client = { ua, registerer, account };
@@ -124,8 +124,22 @@ export class PhoneEngine {
       });
       client.timer = setTimeout(() => { if (this.snapshot.connections[account.id]?.state === 'connecting') { this.connection(account.id, 'error', 'No response from the server. Check the WebSocket URL and credentials.'); void this.disposeClient(account.id); } }, 18000);
       await ua.start();
-      await registerer.register({ requestDelegate: { onReject: response => { clearTimeout(client.timer); this.connection(account.id, 'error', `${response.message.statusCode} ${response.message.reasonPhrase || 'Registration rejected'}`.trim()); } } });
+      await this.register(client);
     } catch (error) { this.connection(account.id, 'error', errorText(error)); await this.disposeClient(account.id); throw error; }
+  }
+  /** Registers, or for an outbound-only account just marks it ready, since its calls authenticate on their own. */
+  private async register(client: Client) {
+    const id = client.account.id;
+    if (client.account.outboundOnly) { clearTimeout(client.timer); this.connection(id, 'registered', 'Outbound only'); return; }
+    await client.registerer.register({ requestDelegate: { onAccept: () => { clearTimeout(client.timer); this.connection(id, 'registered'); }, onReject: response => { clearTimeout(client.timer); this.connection(id, 'error', `${response.message.statusCode} ${response.message.reasonPhrase || 'Registration rejected'}`.trim()); } } });
+  }
+  /** Reconnects a WebRTC account whose connection dropped, as when a VPN goes up or down: after 2 seconds, then backing off to every 30. */
+  private reconnect(id: string, attempt = 1) {
+    const client = this.clients.get(id); if (!client) return;
+    clearTimeout(client.timer);
+    if (attempt === 1) this.log('warning', 'Connection lost. Reconnecting…', id);
+    this.emit({ connections: { ...this.snapshot.connections, [id]: { state: 'connecting', detail: 'Reconnecting…' } } });
+    client.timer = setTimeout(() => { if (this.clients.get(id) === client) void client.ua.reconnect().then(() => this.register(client)).catch(() => this.reconnect(id, attempt + 1)); }, Math.min(30, 2 ** attempt) * 1000);
   }
   private subscribeVoicemail(client: Client) {
     if (client.subscriber) return;

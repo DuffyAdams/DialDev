@@ -32,7 +32,7 @@ type Props = { initial: Account; mode: 'new' | 'edit' | 'duplicate'; secretFrom?
 export default function AccountSheet({ initial, mode, secretFrom, onSave, onClose }: Props) {
   const [draft, setDraft] = useState(initial); const [secret, setSecret] = useState<Credentials>({ password: '', turnPassword: '' });
   const [remember, setRemember] = useState(!!window.desktop); const [reveal, setReveal] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
-  const [advanced, setAdvanced] = useState(() => !!(initial.authUser || initial.displayName || initial.proxy || initial.stun || initial.turn || initial.voicemail || initial.mediaEncryption !== 'none'));
+  const [advanced, setAdvanced] = useState(() => !!(initial.authUser || initial.displayName || initial.proxy || initial.stun || initial.turn || initial.voicemail || initial.outboundOnly || initial.mediaEncryption !== 'none'));
   useEffect(() => { if (secretFrom) void getSecret(secretFrom).then(stored => { if (stored) setSecret(stored); }).catch(e => setError(errorText(e))); }, [secretFrom]);
   const set = <K extends keyof Account>(key: K, value: Account[K]) => setDraft(d => ({ ...d, [key]: value }));
   const transport = (value: Transport) => setDraft(d => ({ ...d, transport: value, port: !d.port || d.port === defaultPort(d.transport) ? defaultPort(value) : d.port }));
@@ -83,6 +83,7 @@ export default function AccountSheet({ initial, mode, secretFrom, onSave, onClos
           <label className="form-row"><span className="row-label">Voicemail</span><input value={draft.voicemail} placeholder="Access number, e.g. *97" spellCheck={false} onChange={e => set('voicemail', e.target.value)} /></label>
         </div>
         <div className="form-group">
+          <ToggleRow label="Outbound calls only" description="Don’t register with the server. Calls go out and authenticate on their own; incoming calls won’t reach DialDev." checked={!!draft.outboundOnly} onChange={v => set('outboundOnly', v)} />
           <ToggleRow label="Register automatically" description="Register on save and whenever DialDev opens." checked={draft.enabled} onChange={v => set('enabled', v)} />
           {window.desktop && <ToggleRow label="Remember password" description="Encrypted on this computer with the system credential store." checked={remember} onChange={setRemember} />}
         </div>
