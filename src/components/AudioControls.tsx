@@ -1,8 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Mic, MicOff, Play, Volume2, VolumeX, Settings, AudioLines } from 'lucide-react';
 import type { Account, Call, Preferences } from '../types';
 import { phone } from '../lib/phone';
-import { deviceOptions, playTestTone, useDevices, useLevel, useMicrophone } from '../lib/audio';
+import { deviceName, deviceOptions, playTestTone, useDevices, useLevel, useMicrophone } from '../lib/audio';
 import { errorText, volumeOf } from '../lib/utils';
 import { Meter } from './UI';
 
@@ -44,7 +45,10 @@ function useCallMedia(id?: string) {
   return media;
 }
 
-/** Positions itself under the number field, or above it when there is no room below. Closes on Escape or a click outside. */
+/**
+ * Positions itself under the number field, or above it when there is no room below. Closes on Escape or a click outside.
+ * It renders at the top of the page, so it looks the same whichever field it opens from.
+ */
 function AudioPopover({ anchor, label, onClose, children }: { anchor: React.RefObject<HTMLButtonElement | null>; label: string; onClose: () => void; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null); const [top, setTop] = useState<number>();
   const closeRef = useRef(onClose); closeRef.current = onClose;
@@ -59,9 +63,9 @@ function AudioPopover({ anchor, label, onClose, children }: { anchor: React.RefO
     document.addEventListener('keydown', key); window.addEventListener('resize', away);
     return () => { document.removeEventListener('keydown', key); window.removeEventListener('resize', away); };
   }, []);
-  return <div className="popover-layer" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+  return createPortal(<div className="popover-layer" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
     <div className="popover audio-popover" style={{ top, visibility: top === undefined ? 'hidden' : undefined }} ref={ref} role="dialog" aria-label={label}>{children}</div>
-  </div>;
+  </div>, document.body);
 }
 
 /**
@@ -88,16 +92,16 @@ export default function AudioControls({ call, account, preferences: prefs, setPr
   const setOutput = (id: string) => { setPreference('output', id); void phone.setOutput(id).catch(e => setError(errorText(e))); };
   const test = () => { setError(''); void playTestTone(prefs.output, volume, () => setTone(null)).then(setTone).catch(e => setError(errorText(e))); };
   const micStatus = call?.muted ? 'Muted' : call?.state === 'held' ? 'On Hold' : mic.error ? 'Unavailable' : micLevel >= 0 ? 'Live' : 'Starting…';
-  const micNote = live && native ? 'This call uses the Mac’s default microphone.'
+  const micNote = live && native ? 'This call uses the Mac’s default microphone. Your choice applies to WebRTC calls.'
     : live && !call.demo ? 'A new microphone takes effect from your next call.'
     : native ? 'For WebRTC calls. UDP, TCP and TLS calls use the Mac’s default microphone.' : '';
-  const speakerNote = live && native ? 'This call plays through the Mac’s default output at the system volume, so its level isn’t shown here.'
+  const speakerNote = live && native ? 'This call plays through the Mac’s default output. Your choice and volume apply to WebRTC calls.'
     : native ? 'For WebRTC calls and the test tone. UDP, TCP and TLS calls play through the Mac’s default output.' : '';
   /** The devices of one kind as checkmark rows, like the Mac's Sound menu. System Default names the device it currently means. */
-  const deviceList = (kind: MediaDeviceKind, fallback: string, value: string, select: (id: string) => void, disabled = false) => {
-    const current = devices.find(d => d.kind === kind && d.deviceId === 'default')?.label.replace(/^Default\s*-\s*/, '');
+  const deviceList = (kind: MediaDeviceKind, fallback: string, value: string, select: (id: string) => void) => {
+    const current = deviceName(devices.find(d => d.kind === kind && d.deviceId === 'default')?.label || '');
     return <div className="device-list" role="radiogroup" aria-label={kind === 'audioinput' ? 'Microphone' : 'Speaker'}>
-      {[{ id: '', label: 'System Default', detail: current }, ...deviceOptions(devices, kind, fallback)].map(d => <button type="button" key={d.id || 'default'} role="radio" aria-checked={d.id === value} className="device-row" disabled={disabled} title={d.label} onClick={() => select(d.id)}>
+      {[{ id: '', label: 'System Default', detail: current }, ...deviceOptions(devices, kind, fallback)].map(d => <button type="button" key={d.id || 'default'} role="radio" aria-checked={d.id === value} className="device-row" title={d.label} onClick={() => select(d.id)}>
         <span className="device-check">{d.id === value && <Check size={14} strokeWidth={2.4} />}</span><span className="device-name">{d.label}</span>{'detail' in d && d.detail && <span className="device-detail">{d.detail}</span>}
       </button>)}
     </div>;
@@ -117,7 +121,7 @@ export default function AudioControls({ call, account, preferences: prefs, setPr
       <div className="popover-heading"><span>Microphone</span><span>{micStatus}</span></div>
       <div className="popover-row">{call?.muted ? <MicOff size={15} strokeWidth={1.9} /> : <Mic size={15} strokeWidth={1.9} />}<Meter level={micShown} label="Microphone level" /></div>
       <div className="popover-section">
-        {deviceList('audioinput', 'Microphone', live && native ? '' : prefs.input, id => setPreference('input', id), live && native)}
+        {deviceList('audioinput', 'Microphone', prefs.input, id => setPreference('input', id))}
         {(mic.error || micNote) && <p className={`popover-note ${mic.error ? 'error' : ''}`}>{mic.error || micNote}</p>}
       </div>
       {settingsLink}

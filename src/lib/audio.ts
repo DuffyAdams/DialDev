@@ -50,7 +50,9 @@ export function useDevices(refresh?: unknown) {
   }, [refresh]);
   return devices;
 }
-export const deviceOptions = (devices: MediaDeviceInfo[], kind: MediaDeviceKind, fallback: string) => devices.filter(d => d.kind === kind && d.deviceId && d.deviceId !== 'default').map((d, i) => ({ id: d.deviceId, label: d.label || `${fallback} ${i + 1}` }));
+/** A device's name without what Chromium appends to it: the USB vendor and product IDs, and "(Built-in)". */
+export const deviceName = (label: string) => label.replace(/^Default\s*-\s*/, '').replace(/\s*\((?:[0-9a-f]{4}:[0-9a-f]{4}|Built-in)\)/gi, '').trim();
+export const deviceOptions = (devices: MediaDeviceInfo[], kind: MediaDeviceKind, fallback: string) => devices.filter(d => d.kind === kind && d.deviceId && d.deviceId !== 'default').map((d, i) => ({ id: d.deviceId, label: deviceName(d.label) || `${fallback} ${i + 1}` }));
 
 /** Plays a short tone on `output` at `volume`. Returns the tone's stream, for metering, once it is playing; it stops by itself. */
 export async function playTestTone(output: string, volume: number, onEnd?: () => void) {
