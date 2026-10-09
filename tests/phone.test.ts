@@ -1,14 +1,38 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import type { Call } from '../src/types';
 vi.stubGlobal('window', {});
-const { PhoneEngine } = await import('../src/lib/phone');
+const { PhoneEngine, simulated } = await import('../src/lib/phone');
+const { defaults } = await import('../src/lib/storage');
 describe('call lifecycle', () => {
   beforeEach(() => vi.useFakeTimers()); afterEach(() => vi.useRealTimers());
   it('cancels dialing without a ghost call or duplicate history', async () => { const engine = new PhoneEngine(); const history = vi.fn(); engine.onHistory = history; const id = await engine.dial('101', 'Test', '', true); await engine.end(id); await vi.advanceTimersByTimeAsync(2000); expect(engine.getSnapshot().calls).toEqual([]); expect(history).toHaveBeenCalledTimes(1); expect(history.mock.calls[0][0].duration).toBe(0); });
   it('holds the original call before connecting another, then merges and separates', async () => { const engine = new PhoneEngine(); const first = await engine.dial('101', 'One', '', true); await vi.advanceTimersByTimeAsync(1500); const second = await engine.dial('102', 'Two', '', true); expect(engine.getSnapshot().calls.find(c => c.id === first)?.state).toBe('held'); await vi.advanceTimersByTimeAsync(1500); await engine.merge(); expect(engine.getSnapshot().calls.every(c => c.conference && c.state === 'active')).toBe(true); await engine.mute(first); expect(engine.getSnapshot().calls.every(c => c.muted)).toBe(true); await engine.hold(second, true); expect(engine.getSnapshot().calls.some(c => c.conference)).toBe(false); });
   it('tracks a missed incoming call and clears its timeout after answering', async () => { const engine = new PhoneEngine(); const history = vi.fn(); engine.onHistory = history; engine.simulateIncoming(); await vi.advanceTimersByTimeAsync(30001); expect(history.mock.calls[0][0].direction).toBe('missed'); engine.simulateIncoming(); const id = engine.getSnapshot().calls[0].id; await engine.answer(id); await vi.advanceTimersByTimeAsync(31000); expect(engine.getSnapshot().calls[0].state).toBe('active'); await engine.end(id); expect(history.mock.calls[1][0].direction).toBe('incoming'); });
+  it('plays the test line through call progress and its menu without an account', async () => { const engine = new PhoneEngine(); const history = vi.fn(); engine.onHistory = history; const id = await engine.dial('1234', 'DialDev Test Line', '', true); await vi.advanceTimersByTimeAsync(1000); expect(engine.getSnapshot().calls[0].progress).toBe('ringing'); await vi.advanceTimersByTimeAsync(1500); expect(engine.getSnapshot().calls[0].progress).toBe('early'); await vi.advanceTimersByTimeAsync(4000); expect(engine.getSnapshot().calls[0].state).toBe('active'); await engine.dtmf(id, '7'); await engine.dtmf(id, '1'); await vi.advanceTimersByTimeAsync(1000); const speech = engine.getSnapshot().log.filter(e => e.kind === 'speech' && e.callId === id).map(e => e.text); expect(speech).toContain('You have sent 7, 1.'); expect(speech).not.toContain('There is no option 7.'); await engine.dtmf(id, '2'); await vi.advanceTimersByTimeAsync(3000); expect(engine.getSnapshot().log.filter(e => e.kind === 'dtmf' && e.side === 'remote').map(e => e.digit)).toEqual(['4', '2', '#']); await engine.dtmf(id, '#'); await vi.advanceTimersByTimeAsync(3000); expect(engine.getSnapshot().calls).toEqual([]); expect(history.mock.calls[0][1]).toBe(true); });
+  it('calls back from the test line when 9 is pressed', async () => { const engine = new PhoneEngine(); const id = await engine.dial('1234', 'DialDev Test Line', '', true); await vi.advanceTimersByTimeAsync(6000); await engine.dtmf(id, '9'); await vi.advanceTimersByTimeAsync(4000); expect(engine.getSnapshot().calls).toEqual([]); await vi.advanceTimersByTimeAsync(3000); const [call] = engine.getSnapshot().calls; expect(call).toMatchObject({ direction: 'incoming', state: 'ringing', number: '1234', demo: true }); await engine.answer(call.id); await vi.advanceTimersByTimeAsync(1000); expect(engine.getSnapshot().log.some(e => e.callId === call.id && e.text.includes('calling you back'))).toBe(true); });
+  it('simulates the test line, and calls added while only simulated calls are up', () => { const demo = { demo: true } as Call, live = { demo: false } as Call; expect(simulated(' 1234 ', [])).toBe(true); expect(simulated('5555', [])).toBe(false); expect(simulated('5555', [demo])).toBe(true); expect(simulated('5555', [demo, live])).toBe(false); });
   it('does not simulate a call in live mode without a registered account', async () => { const engine = new PhoneEngine(); await expect(engine.dial('101', 'Test', 'missing', false)).rejects.toThrow('Register a SIP account'); expect(engine.getSnapshot().calls).toHaveLength(0); });
   it('enforces the concurrent call limit', async () => { const engine = new PhoneEngine(); for (let i = 0; i < 5; i++) { await engine.dial(String(i), 'Test', '', true); await vi.advanceTimersByTimeAsync(1500); } await expect(engine.dial('6', 'Test', '', true)).rejects.toThrow('five'); });
   it('records sent DTMF digits on the call and in the activity log', async () => { const engine = new PhoneEngine(); const id = await engine.dial('8000', 'IVR', '', true); await vi.advanceTimersByTimeAsync(1500); await engine.dtmf(id, '1'); await engine.dtmf(id, '#'); await engine.dtmf(id, 'x'); expect(engine.getSnapshot().calls[0].dtmf).toBe('1#'); expect(engine.getSnapshot().log.map(e => e.text)).toEqual(expect.arrayContaining(['Sent DTMF 1', 'Sent DTMF #'])); });
+  it('records connected native calls with Record Calls on, including calls already up when it is turned on', async () => {
+    let send: (event: Record<string, unknown>) => void = () => {}; const sipAction = vi.fn(async (_: Record<string, unknown>) => undefined);
+    Object.assign(window, { desktop: { onSipEvent: (callback: typeof send) => { send = callback; return () => {}; }, setCallActive: () => {}, sipAction } });
+    try {
+      const engine = new PhoneEngine(); engine.preferences = { ...defaults.preferences, recordCalls: true };
+      send({ kind: 'event', accountId: 'a1', id: 'c1', type: 'CALL_OUTGOING', direction: 'outgoing', peeruri: 'sip:1002@pbx.example' }); await vi.advanceTimersByTimeAsync(0);
+      expect(sipAction).not.toHaveBeenCalled();
+      send({ kind: 'event', accountId: 'a1', id: 'c1', type: 'CALL_ESTABLISHED' }); await vi.advanceTimersByTimeAsync(0);
+      expect(sipAction).toHaveBeenCalledWith(expect.objectContaining({ action: 'record', call: 'c1' })); expect(engine.getSnapshot().calls[0].recording).toBe(true);
+      engine.preferences = { ...defaults.preferences, recordCalls: false }; sipAction.mockClear();
+      send({ kind: 'event', accountId: 'a1', id: 'c2', type: 'CALL_OUTGOING', direction: 'outgoing', peeruri: 'sip:1003@pbx.example' }); send({ kind: 'event', accountId: 'a1', id: 'c2', type: 'CALL_ESTABLISHED' }); await vi.advanceTimersByTimeAsync(0);
+      const demo = await engine.dial('101', 'Test', '', true); await vi.advanceTimersByTimeAsync(1500);
+      const records = () => sipAction.mock.calls.filter(([a]) => a.action === 'record').map(([a]) => a.call);
+      expect(records()).toEqual([]);
+      engine.preferences = { ...defaults.preferences, recordCalls: true }; await vi.advanceTimersByTimeAsync(0);
+      expect(records()).toEqual(['c2']);
+      expect(engine.getSnapshot().calls.find(c => c.id === demo)?.recording).toBe(false); expect(engine.getSnapshot().error).toBeNull();
+    } finally { delete (window as { desktop?: unknown }).desktop; }
+  });
   it('carries native call progress and the SIP close reason into history and the log', async () => {
     let send: (event: Record<string, unknown>) => void = () => {};
     Object.assign(window, { desktop: { onSipEvent: (callback: typeof send) => { send = callback; return () => {}; }, setCallActive: () => {} } });

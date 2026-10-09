@@ -57,3 +57,5 @@ export function vCard(contacts: {name: string; number: string; email: string; co
   const escape = (s: string) => s.replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/[,;]/g, '\\$&');
   return contacts.map(c => ['BEGIN:VCARD', 'VERSION:3.0', `FN:${escape(c.name)}`, `TEL:${escape(c.number)}`, `EMAIL:${escape(c.email)}`, `ORG:${escape(c.company)}`, 'END:VCARD'].join('\r\n')).join('\r\n');
 }
+/** A stored volume as 0–1, treating anything unusable as full volume. */
+export const volumeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;

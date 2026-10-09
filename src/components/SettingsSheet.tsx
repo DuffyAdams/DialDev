@@ -1,49 +1,32 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Preferences, TranscriptionInfo, UpdateState } from '../types';
 import { phone } from '../lib/phone';
-import { errorText, timeLabel } from '../lib/utils';
-import { Segmented, Sheet, ToggleRow } from './UI';
+import { deviceOptions, playTestTone, useDevices, useLevel, useMicrophone } from '../lib/audio';
+import { errorText, timeLabel, volumeOf } from '../lib/utils';
+import { Meter, Segmented, Sheet, ToggleRow } from './UI';
 
-type Props = { preferences: Preferences; setPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void; update: UpdateState | null; onClose: () => void };
+type Props = { initialTab?: 'general' | 'audio'; preferences: Preferences; setPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void; update: UpdateState | null; onClose: () => void };
 const updateNote = (u: UpdateState) => u.status === 'checking' ? 'Checking for updates…'
   : u.status === 'current' ? `DialDev ${u.current} is up to date.${u.checked ? ` Checked ${timeLabel(u.checked)}.` : ''}`
   : u.status === 'available' ? `DialDev ${u.version} is available. You have ${u.current}.${u.reason ? ` ${u.reason}` : ''}`
   : u.status === 'downloading' ? `Downloading DialDev ${u.version}… ${Math.round((u.progress || 0) * 100)}%`
   : u.status === 'installing' ? `Installing DialDev ${u.version}. It reopens when done.`
   : u.status === 'error' ? u.error || 'Couldn’t check for updates.' : `Version ${u.current}`;
-export default function SettingsSheet({ preferences: prefs, setPreference, update, onClose }: Props) {
-  const [tab, setTab] = useState<'general' | 'audio'>('general'); const [error, setError] = useState('');
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]); const [level, setLevel] = useState(-1);
+export default function SettingsSheet({ initialTab = 'general', preferences: prefs, setPreference, update, onClose }: Props) {
+  const [tab, setTab] = useState(initialTab); const [error, setError] = useState('');
+  const [testing, setTesting] = useState(false); const mic = useMicrophone(testing, prefs.input); const level = useLevel(mic.stream); const devices = useDevices(mic.stream);
   const [speech, setSpeech] = useState<{ system?: TranscriptionInfo; selected?: TranscriptionInfo }>({});
   useEffect(() => { void window.desktop?.transcriptionInfo?.('').then(system => setSpeech(s => ({ ...s, system }))).catch(e => setSpeech(s => ({ ...s, system: { available: false, reason: errorText(e), locales: [] } }))); }, []);
   useEffect(() => { if (prefs.transcribeLocale) void window.desktop?.transcriptionInfo?.(prefs.transcribeLocale).then(selected => setSpeech(s => ({ ...s, selected }))).catch(() => {}); }, [prefs.transcribeLocale]);
   const speechInfo = prefs.transcribeLocale ? speech.selected : speech.system;
   const speechNote = !window.desktop?.transcriptionInfo ? 'Available in the desktop app.' : !speechInfo ? 'Checking this computer…' : !speechInfo.available ? speechInfo.reason || 'Not available on this computer.'
     : `What each side says appears in Activity. Transcribed on this Mac; audio never leaves it.${speechInfo.installed === false ? ` The ${speechInfo.language || 'language'} model downloads on first use.` : ''}`;
-  const test = useRef<{ stream: MediaStream; context: AudioContext; frame: number } | null>(null);
-  const stopTest = () => { const t = test.current; if (t) { cancelAnimationFrame(t.frame); t.stream.getTracks().forEach(track => track.stop()); void t.context.close(); test.current = null; } setLevel(-1); };
-  useEffect(() => () => stopTest(), []);
-  useEffect(() => { const update = () => { void navigator.mediaDevices?.enumerateDevices().then(setDevices).catch(() => {}); }; update(); navigator.mediaDevices?.addEventListener('devicechange', update); return () => navigator.mediaDevices?.removeEventListener('devicechange', update); }, []);
+  const stopTest = () => setTesting(false);
   const set = <K extends keyof Preferences>(key: K, value: Preferences[K]) => { setPreference(key, value); if (key === 'output') void phone.setOutput(value as string).catch(e => setError(errorText(e))); };
-  const testMic = async () => {
-    if (test.current) { stopTest(); return; } setError('');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: prefs.input ? { exact: prefs.input } : undefined } });
-      const context = new AudioContext(); const analyser = context.createAnalyser(); analyser.fftSize = 512; context.createMediaStreamSource(stream).connect(analyser);
-      const samples = new Float32Array(analyser.fftSize); test.current = { stream, context, frame: 0 };
-      const tick = () => { analyser.getFloatTimeDomainData(samples); const rms = Math.sqrt(samples.reduce((sum, v) => sum + v * v, 0) / samples.length); setLevel(Math.min(1, rms * 4)); if (test.current) test.current.frame = requestAnimationFrame(tick); };
-      tick(); setDevices(await navigator.mediaDevices.enumerateDevices());
-    } catch (e) { setError(errorText(e)); }
-  };
-  const testSpeaker = async () => {
-    setError('');
-    try {
-      const context = new AudioContext(); const destination = context.createMediaStreamDestination(); const oscillator = context.createOscillator(); const gain = context.createGain(); gain.gain.value = .12; oscillator.frequency.value = 880; oscillator.connect(gain).connect(destination);
-      const audio = new Audio(); audio.srcObject = destination.stream; if (prefs.output && audio.setSinkId) await audio.setSinkId(prefs.output); await audio.play(); oscillator.start();
-      setTimeout(() => { oscillator.stop(); audio.pause(); audio.srcObject = null; void context.close(); }, 600);
-    } catch (e) { setError(errorText(e)); }
-  };
-  const options = (kind: MediaDeviceKind, fallback: string) => devices.filter(d => d.kind === kind && d.deviceId && d.deviceId !== 'default').map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `${fallback} ${i + 1}`}</option>);
+  useEffect(() => { if (mic.error) { setError(mic.error); setTesting(false); } }, [mic.error]);
+  const testMic = () => { setError(''); setTesting(t => !t); };
+  const testSpeaker = () => { setError(''); void playTestTone(prefs.output, volumeOf(prefs.volume)).catch(e => setError(errorText(e))); };
+  const options = (kind: MediaDeviceKind, fallback: string) => deviceOptions(devices, kind, fallback).map(d => <option key={d.id} value={d.id}>{d.label}</option>);
   return <Sheet title="Settings" width={500} onClose={onClose}>
     <Segmented label="Settings section" className="wide" value={tab} onChange={value => { setTab(value); stopTest(); setError(''); }} options={[{ value: 'general', label: 'General' }, { value: 'audio', label: 'Audio' }]} />
     {tab === 'general' ? <>
@@ -51,6 +34,7 @@ export default function SettingsSheet({ preferences: prefs, setPreference, updat
         <div className="form-row"><span className="row-label">Appearance</span><Segmented label="Appearance" value={prefs.theme} onChange={v => set('theme', v)} options={[{ value: 'system', label: 'Auto' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} /></div>
         <ToggleRow label="Sounds" description="Ringtone and keypad tones." checked={prefs.sounds} onChange={v => set('sounds', v)} />
         <ToggleRow label="Show Call Details" description="Show the SIP address and line on the call screen." checked={prefs.callDetails} onChange={v => set('callDetails', v)} />
+        <ToggleRow label="Record Calls" description="Record both sides of each call once it connects. Click REC on the call screen to stop." checked={prefs.recordCalls} onChange={v => set('recordCalls', v)} />
       </div>
       <div className="form-group">
         <ToggleRow label="Do Not Disturb" description="Decline incoming calls with 486 Busy Here." checked={prefs.dnd} onChange={v => set('dnd', v)} />
@@ -73,17 +57,17 @@ export default function SettingsSheet({ preferences: prefs, setPreference, updat
       </div>}
     </> : <>
       <div className="form-group">
-        <label className="form-row"><span className="row-label">Microphone</span><select value={prefs.input} onChange={e => { stopTest(); set('input', e.target.value); }}><option value="">System Default</option>{options('audioinput', 'Microphone')}</select></label>
-        <div className="form-row"><span className="row-label">Input Level</span><span className="meter-field"><span className="meter" aria-hidden="true">{Array.from({ length: 20 }, (_, i) => <i key={i} className={level >= 0 && i < level * 20 ? 'lit' : ''} />)}</span><button type="button" className="button small" onClick={() => void testMic()}>{level >= 0 ? 'Stop' : 'Test'}</button></span></div>
+        <label className="form-row"><span className="row-label">Microphone</span><select value={prefs.input} onChange={e => set('input', e.target.value)}><option value="">System Default</option>{options('audioinput', 'Microphone')}</select></label>
+        <div className="form-row"><span className="row-label">Input Level</span><span className="meter-field"><Meter level={level} label="Input level" /><button type="button" className="button small" onClick={testMic}>{testing ? 'Stop' : 'Test'}</button></span></div>
         <label className="form-row"><span className="row-label">Speaker</span><select value={prefs.output} onChange={e => set('output', e.target.value)}><option value="">System Default</option>{options('audiooutput', 'Speaker')}</select></label>
-        <div className="form-row"><span className="row-label">Test Tone</span><button type="button" className="button small" onClick={() => void testSpeaker()}>Play</button></div>
+        <div className="form-row"><span className="row-label">Call Volume</span><span className="meter-field"><input type="range" className="volume-slider" aria-label="Call volume" min={0} max={100} step={1} value={Math.round(volumeOf(prefs.volume) * 100)} style={{ '--value': `${volumeOf(prefs.volume) * 100}%` } as React.CSSProperties} onChange={e => set('volume', Number(e.target.value) / 100)} /><button type="button" className="button small" onClick={testSpeaker}>Test</button></span></div>
         <label className="form-row"><span className="row-label">Camera</span><select value={prefs.camera} onChange={e => set('camera', e.target.value)}><option value="">System Default</option>{options('videoinput', 'Camera')}</select></label>
       </div>
       <div className="form-group">
         <ToggleRow label="Echo Cancellation" checked={prefs.echoCancellation} onChange={v => set('echoCancellation', v)} />
         <ToggleRow label="Noise Suppression" checked={prefs.noiseSuppression} onChange={v => set('noiseSuppression', v)} />
       </div>
-      <p className="form-note">Device choices and processing apply to WebRTC (WSS) calls. UDP, TCP and TLS calls use the system default input and output.</p>
+      <p className="form-note">Device choices, volume and processing apply to WebRTC (WSS) calls. UDP, TCP and TLS calls use the system default input and output.</p>
     </>}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="sheet-actions"><span className="sheet-version">DialDev {update?.current || __APP_VERSION__}</span><span className="spacer" /><button type="button" className="button primary" onClick={onClose}>Done</button></div>

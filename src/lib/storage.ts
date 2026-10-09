@@ -1,7 +1,7 @@
 import type { AppData, Credentials, Pane, Recording } from '../types';
 const panes: Pane[] = ['history', 'contacts', 'keypad', 'messages', 'activity'];
 const namespace = window.desktop?.storageNamespace || 'dialdev';
-export const defaults: AppData = { version: 1, accounts: [], contacts: [], history: [], messages: [], selectedAccount: '', pane: 'keypad', recentsSeen: 0, preferences: { theme: 'system', dnd: false, sounds: true, autoAnswer: false, forward: '', input: '', output: '', camera: '', echoCancellation: true, noiseSuppression: true, callDetails: false, transcribe: true, transcribeLocale: '', captions: true, checkUpdates: true } };
+export const defaults: AppData = { version: 1, accounts: [], contacts: [], history: [], messages: [], selectedAccount: '', pane: 'keypad', recentsSeen: 0, preferences: { theme: 'system', dnd: false, sounds: true, autoAnswer: false, forward: '', input: '', output: '', camera: '', echoCancellation: true, noiseSuppression: true, callDetails: false, transcribe: true, transcribeLocale: '', captions: true, checkUpdates: true, volume: 1, recordCalls: false } };
 export function loadData(): AppData {
   try {
     const raw = JSON.parse(localStorage.getItem(`${namespace}.v1`) || 'null');

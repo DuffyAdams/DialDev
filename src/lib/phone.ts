@@ -1,6 +1,6 @@
 import { Invitation, Inviter, Messager, Registerer, RegistererState, Session, SessionState, Subscriber, UserAgent, Web } from 'sip.js';
 import type { Account, Call, ChatMessage, Credentials, HistoryItem, LogEntry, NativeEvent, PhoneSnapshot, Preferences, TranscriptEvent, TranscriptionInfo } from '../types';
-import { accountLabel, dialTarget, errorText, uid } from './utils';
+import { accountLabel, dialTarget, errorText, uid, volumeOf } from './utils';
 import { defaults, recordings } from './storage';
 
 type Client = { ua: UserAgent; registerer: Registerer; account: Account; subscriber?: Subscriber; timer?: ReturnType<typeof setTimeout> };
@@ -14,6 +14,15 @@ const failure = (reason?: string) => !!reason && /^[3-6]\d\d\b/.test(reason);
 const words = (text: string) => new Set(text.toLowerCase().match(/[\p{L}\p{N}']+/gu) || []);
 /** Whether `heard` mostly repeats `said` (at least 3 words, 60% shared): the microphone picking up the other side. */
 export function repeats(heard: string, said: string) { const mine = words(heard), theirs = words(said); if (mine.size < 3) return false; let shared = 0; for (const w of mine) if (theirs.has(w)) shared++; return shared / mine.size >= .6; }
+/**
+ * The test line, in development builds only. Dialing it plays a whole simulated call, so every call screen can be seen without a SIP
+ * account or network. Release builds dial 1234 like any other number, since it is a common real extension.
+ */
+export const testLine = { enabled: import.meta.env.DEV, number: '1234', name: 'DialDev Test Line' };
+/** Whether dialing `number` places a simulated call: the test line, or a call added while only simulated calls are up. */
+export const simulated = (number: string, calls: Call[]) => testLine.enabled && (number.trim() === testLine.number || (calls.length > 0 && calls.every(c => c.demo)));
+const testMenu = ['Press 1 to hear the digits you have sent.', 'Press 2 and the line sends you DTMF.', 'Press 9 and the line calls you back.', 'Press pound to hang up, or star to hear these options again.'];
+const spoken = (digits: string) => [...digits].map(d => d === '*' ? 'star' : d === '#' ? 'pound' : d).join(', ');
 
 export class PhoneEngine {
   private snapshot: PhoneSnapshot = { calls: [], connections: {}, voicemail: {}, error: null, log: [] };
@@ -23,7 +32,9 @@ export class PhoneEngine {
   private sessions = new Map<string, Session>();
   private audio = new Map<string, HTMLAudioElement>();
   private recorders = new Map<string, Recorder>();
-  private demoTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private demoTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
+  /** The test line's current prompt for each call; pressing a key interrupts it, as an IVR would. */
+  private demoPrompts = new Map<string, number>();
   private conferenceContext?: AudioContext;
   private conferenceOriginals = new Map<string, MediaStreamTrack>();
   private nativeAccounts = new Map<string, Account>();
@@ -39,6 +50,8 @@ export class PhoneEngine {
   set preferences(value: Preferences) {
     const previous = this.prefs; this.prefs = value;
     if (value.transcribeLocale !== previous.transcribeLocale) this.transcription = undefined;
+    if (value.recordCalls && !previous.recordCalls) for (const call of this.snapshot.calls) this.autoRecord(call.id);
+    if (value.volume !== previous.volume) for (const audio of this.audio.values()) audio.volume = volumeOf(value.volume);
     if (value.transcribe !== previous.transcribe) for (const call of this.snapshot.calls) { if (!value.transcribe) this.stopTranscript(call.id); else if (call.answered || (this.isNative(call.id) && call.direction === 'outgoing')) void this.transcribe(call.id); }
   }
   onHistory?: (item: HistoryItem, demo: boolean) => void;
@@ -72,6 +85,9 @@ export class PhoneEngine {
   fail(error: unknown) { const text = errorText(error); this.emit({ error: text }); this.log('error', text); }
   private update(id: string, patch: Partial<Call>) { this.emit({ calls: this.snapshot.calls.map(c => c.id === id ? { ...c, ...patch } : c) }); }
   private call(id: string) { const call = this.snapshot.calls.find(c => c.id === id); if (!call) throw new Error('This call has ended.'); return call; }
+  /** Runs `fn` after `ms` if the simulated call is still up. */
+  private demoLater(id: string, ms: number, fn: (call: Call) => void) { const timers = this.demoTimers.get(id) || []; timers.push(setTimeout(() => { const call = this.snapshot.calls.find(c => c.id === id); if (call) fn(call); }, ms)); this.demoTimers.set(id, timers); }
+  private clearDemo(id: string) { this.demoTimers.get(id)?.forEach(clearTimeout); this.demoTimers.delete(id); this.demoPrompts.delete(id); }
   private handler(id: string) { return this.sessions.get(id)?.sessionDescriptionHandler as Web.SessionDescriptionHandler | undefined; }
   private constraints(video = false) { return { audio: { deviceId: this.preferences.input ? { exact: this.preferences.input } : undefined, echoCancellation: this.preferences.echoCancellation, noiseSuppression: this.preferences.noiseSuppression, autoGainControl: true }, video: video ? { deviceId: this.preferences.camera ? { exact: this.preferences.camera } : undefined, width: { ideal: 1280 }, height: { ideal: 720 } } : false }; }
   private target(number: string, account: Account) { const uri = UserAgent.makeURI(dialTarget(number, account.domain)); if (!uri) throw new Error('The SIP address is invalid.'); return uri; }
@@ -150,7 +166,7 @@ export class PhoneEngine {
       else void this.transcribe(id);
     }
     if ((event.type === 'CALL_RINGING' || event.type === 'CALL_PROGRESS') && this.snapshot.calls.some(c => c.id === id && c.direction === 'outgoing')) this.update(id, { progress: event.type === 'CALL_RINGING' ? 'ringing' : 'early' });
-    if (event.type === 'CALL_ESTABLISHED' && this.snapshot.calls.some(c => c.id === id)) this.update(id, { state: 'active', answered: this.call(id).answered ?? Date.now() });
+    if (event.type === 'CALL_ESTABLISHED' && this.snapshot.calls.some(c => c.id === id)) { this.update(id, { state: 'active', answered: this.call(id).answered ?? Date.now() }); this.autoRecord(id); }
     if (event.type === 'CALL_CLOSED') this.finish(id, event.param);
     if (event.type === 'CALL_TRANSFER_FAILED') this.fail(new Error(`Transfer failed: ${event.param || 'The provider declined the request.'}`));
   }
@@ -179,7 +195,8 @@ export class PhoneEngine {
     const uri = client ? this.target(number, client.account).toString() : `sip:${number}@demo`;
     const call: Call = { id: uid(), accountId: demo ? 'demo' : accountId, name: name || number, number, uri, direction: 'outgoing', state: 'dialing', started: Date.now(), muted: false, video, cameraOff: false, recording: false, conference: false, demo, dtmf: '' };
     this.emit({ calls: [...this.snapshot.calls, call] });
-    if (demo) { this.demoTimers.set(call.id, setTimeout(() => { this.update(call.id, { state: 'active', answered: Date.now() }); }, 1400)); return call.id; }
+    if (demo && number === testLine.number) { this.dialTestLine(call); return call.id; }
+    if (demo) { this.demoLater(call.id, 1400, () => this.update(call.id, { state: 'active', answered: Date.now() })); return call.id; }
     try {
       const session = new Inviter(client!.ua, this.target(number, client!.account), { sessionDescriptionHandlerOptions: { constraints: this.constraints(video) } });
       this.track(call.id, session);
@@ -197,7 +214,33 @@ export class PhoneEngine {
     this.emit({ calls: [...this.snapshot.calls, call] }); this.track(call.id, invitation); this.onIncoming?.(call);
     if (this.preferences.autoAnswer && !call.video && this.snapshot.calls.length === 1) await this.answer(call.id, false);
   }
-  simulateIncoming() { const call: Call = { id: uid(), accountId: 'demo', name: 'Test caller', number: '101', uri: 'sip:101@demo', direction: 'incoming', state: 'ringing', started: Date.now(), muted: false, video: false, cameraOff: false, recording: false, conference: false, demo: true, dtmf: '' }; if (this.preferences.dnd) return; this.emit({ calls: [...this.snapshot.calls, call] }); this.onIncoming?.(call); this.demoTimers.set(call.id, setTimeout(() => this.finish(call.id), 30000)); }
+  simulateIncoming() {
+    const call: Call = { id: uid(), accountId: 'demo', name: testLine.name, number: testLine.number, uri: `sip:${testLine.number}@demo`, direction: 'incoming', state: 'ringing', started: Date.now(), muted: false, video: false, cameraOff: false, recording: false, conference: false, demo: true, dtmf: '', transcribing: this.prefs.transcribe };
+    if (this.preferences.dnd || this.snapshot.calls.length >= 5) { this.log('info', `Declined incoming call from ${call.uri} (${this.preferences.dnd ? 'Do Not Disturb' : 'call limit reached'})`, call.accountId); return; }
+    this.log('info', `Incoming call from ${call.uri}`, call.accountId);
+    this.emit({ calls: [...this.snapshot.calls, call] }); this.onIncoming?.(call); this.demoLater(call.id, 30000, () => this.finish(call.id));
+  }
+  /** Plays the test line's call setup slowly enough to watch: 180 Ringing, 183 with an announcement, then 200 OK and its menu. */
+  private dialTestLine(call: Call) {
+    this.log('info', `Outgoing call to ${call.uri}`, call.accountId); this.update(call.id, { transcribing: this.prefs.transcribe });
+    this.demoLater(call.id, 900, c => { this.update(c.id, { progress: 'ringing' }); this.log('info', 'Ringing', c.accountId); });
+    this.demoLater(call.id, 2400, c => { this.update(c.id, { progress: 'early' }); this.log('info', 'Session progress (early media)', c.accountId); this.say(c, 'Thanks for calling the DialDev test line.', 'This call is simulated. Nothing leaves your computer.'); });
+    this.demoLater(call.id, 6000, c => { this.update(c.id, { state: 'active', answered: Date.now() }); this.log('success', 'Call established', c.accountId); this.say(c, ...testMenu); });
+  }
+  /** The test line speaks: each phrase is logged as remote speech, which also shows as the call screen's caption. */
+  private say(call: Call, ...phrases: string[]) {
+    const prompt = (this.demoPrompts.get(call.id) || 0) + 1; this.demoPrompts.set(call.id, prompt);
+    phrases.forEach((text, i) => this.demoLater(call.id, i * 2200, c => { if (this.demoPrompts.get(c.id) === prompt) this.log('info', text, c.accountId, { kind: 'speech', side: 'remote', callId: c.id, speaker: c.name }); }));
+  }
+  /** The test line's menu. Each option exercises a different part of the call screen and the activity log. */
+  private testLineDigit(call: Call, digit: string) {
+    const hangUp = (c: Call) => { this.log('info', 'Call closed · remote party hung up', c.accountId); this.finish(c.id); };
+    if (digit === '1') this.say(call, `You have sent ${spoken(call.dtmf)}.`);
+    else if (digit === '2') { this.say(call, 'Sending you 4, 2, pound.'); [...'42#'].forEach((d, i) => this.demoLater(call.id, 1500 + i * 400, c => this.log('info', `Received DTMF ${d}`, c.accountId, { kind: 'dtmf', side: 'remote', callId: c.id, speaker: c.name, digit: d, detail: 'RFC 4733' }))); }
+    else if (digit === '9') { this.say(call, 'Hanging up now. The test line will call you right back.'); this.demoLater(call.id, 3000, c => { hangUp(c); setTimeout(() => this.simulateIncoming(), 2500); }); }
+    else if (digit === '#') { this.say(call, 'Goodbye.'); this.demoLater(call.id, 1500, hangUp); }
+    else this.say(call, ...(digit === '*' ? testMenu : [`There is no option ${digit}.`, ...testMenu]));
+  }
   private track(id: string, session: Session) {
     this.sessions.set(id, session);
     session.delegate = { onRefer: referral => { void referral.reject(); }, onSessionDescriptionHandler: () => this.attach(id), onInfo: info => {
@@ -207,19 +250,19 @@ export class PhoneEngine {
     } };
     session.stateChange.addListener(state => {
       const accountId = this.snapshot.calls.find(c => c.id === id)?.accountId;
-      if (state === SessionState.Established) { this.update(id, { state: 'active', answered: this.call(id).answered ?? Date.now() }); this.attach(id); this.log('success', 'Call established', accountId); void this.transcribe(id); }
+      if (state === SessionState.Established) { this.update(id, { state: 'active', answered: this.call(id).answered ?? Date.now() }); this.attach(id); this.log('success', 'Call established', accountId); void this.transcribe(id); this.autoRecord(id); }
       if (state === SessionState.Terminated) { this.log('info', 'Call closed', accountId); this.finish(id); }
     });
   }
   private attach(id: string) {
     const handler = this.handler(id); if (!handler) return;
     let audio = this.audio.get(id); if (!audio) { audio = document.createElement('audio'); audio.autoplay = true; this.audio.set(id, audio); }
-    audio.srcObject = handler.remoteMediaStream;
+    audio.srcObject = handler.remoteMediaStream; audio.volume = volumeOf(this.prefs.volume);
     if (this.preferences.output) void audio.setSinkId?.(this.preferences.output).catch(e => this.fail(e));
     const play = () => { void audio!.play().catch(() => {}); }; handler.remoteMediaStream.addEventListener('addtrack', play); play();
   }
   getMedia(id: string) { return { local: this.handler(id)?.localMediaStream, remote: this.handler(id)?.remoteMediaStream }; }
-  async answer(id: string, video = false) { const call = this.call(id); this.log('info', 'Answering', call.accountId); for (const other of this.snapshot.calls.filter(c => c.id !== id && c.state === 'active')) await this.hold(other.id, true); if (call.demo) { clearTimeout(this.demoTimers.get(id)); this.update(id, { state: 'active', answered: Date.now() }); return; } if (this.isNative(id)) { void this.transcribe(id); await this.nativeAction('answer', id); return; } const session = this.sessions.get(id); if (session instanceof Invitation) { this.update(id, { video }); await session.accept({ sessionDescriptionHandlerOptions: { constraints: this.constraints(video) } }); } }
+  async answer(id: string, video = false) { const call = this.call(id); this.log('info', 'Answering', call.accountId); for (const other of this.snapshot.calls.filter(c => c.id !== id && c.state === 'active')) await this.hold(other.id, true); if (call.demo) { this.clearDemo(id); this.update(id, { state: 'active', answered: Date.now() }); if (call.number === testLine.number) this.demoLater(id, 800, c => this.say(c, 'Hi, this is the DialDev test line calling you back.', ...testMenu)); return; } if (this.isNative(id)) { void this.transcribe(id); await this.nativeAction('answer', id); return; } const session = this.sessions.get(id); if (session instanceof Invitation) { this.update(id, { video }); await session.accept({ sessionDescriptionHandlerOptions: { constraints: this.constraints(video) } }); } }
   async end(id: string) {
     const call = this.call(id); this.log('info', call.state === 'ringing' && call.direction === 'incoming' ? 'Declined' : call.answered ? 'Hung up' : 'Cancelled', call.accountId);
     if (call.demo) { this.finish(id); return; } if (this.isNative(id)) { await this.nativeAction('end', id); return; }
@@ -234,7 +277,7 @@ export class PhoneEngine {
     const call = this.snapshot.calls.find(c => c.id === id); if (!call) return;
     const account = this.clients.get(call.accountId)?.account || this.nativeAccounts.get(call.accountId); const reason = closeReason || call.reason;
     if (call.conference) void this.splitConference(this.snapshot.calls.find(c => c.id !== id)?.id).catch(e => this.fail(e));
-    this.stopRecording(id); this.stopTranscript(id); clearTimeout(this.demoTimers.get(id)); this.demoTimers.delete(id);
+    this.stopRecording(id); this.stopTranscript(id); this.clearDemo(id);
     const audio = this.audio.get(id); if (audio) { audio.pause(); audio.srcObject = null; } this.audio.delete(id); this.sessions.delete(id);
     this.onHistory?.({ id, name: call.name, number: call.number, direction: call.direction === 'incoming' && !call.answered ? 'missed' : call.direction, time: call.started, duration: call.answered ? Math.round((Date.now() - call.answered) / 1000) : 0, account: call.demo ? 'Demo line' : account ? accountLabel(account) : 'SIP account', accountId: call.accountId, video: call.video, ...(reason ? { reason } : {}) }, call.demo);
     this.emit({ calls: this.snapshot.calls.filter(c => c.id !== id) });
@@ -252,7 +295,8 @@ export class PhoneEngine {
     if (!/^[0-9*#]$/.test(digit)) return; const call = this.call(id); this.update(id, { dtmf: (call.dtmf + digit).slice(-64) });
     const sender = this.handler(id)?.peerConnection?.getSenders().find(s => s.track?.kind === 'audio'); const rtp = this.isNative(id) || !!sender?.dtmf?.canInsertDTMF;
     this.log('info', `Sent DTMF ${digit}`, call.accountId, { kind: 'dtmf', side: 'local', callId: id, speaker: 'You', digit, detail: call.demo ? undefined : rtp ? 'RFC 4733' : 'SIP INFO' });
-    if (call.demo) return; if (this.isNative(id)) { await this.nativeAction('dtmf', id, { to: digit }); return; }
+    if (call.demo) { if (call.number === testLine.number) { this.demoPrompts.set(id, (this.demoPrompts.get(id) || 0) + 1); this.demoLater(id, 700, c => this.testLineDigit(c, digit)); } return; }
+    if (this.isNative(id)) { await this.nativeAction('dtmf', id, { to: digit }); return; }
     if (sender?.dtmf?.canInsertDTMF) sender.dtmf.insertDTMF(digit, 160, 70); else await this.sessions.get(id)?.info({ requestOptions: { body: { contentDisposition: 'render', contentType: 'application/dtmf-relay', content: `Signal=${digit}\r\nDuration=160` } } });
   }
   async transfer(id: string, target: string, attendedId?: string) {
@@ -295,6 +339,8 @@ export class PhoneEngine {
     recorder.onstop = () => { const blob = new Blob(chunks, { type: recorder.mimeType }); void recordings.save({ id: uid(), name: call.name, number: call.number, time: started, duration: Math.round((Date.now() - started) / 1000), blob }).then(() => this.onRecording?.()).catch(e => this.fail(e)); void context.close(); destination.stream.getTracks().forEach(t => t.stop()); };
     recorder.start(1000); this.recorders.set(id, { recorder, context, started }); this.update(id, { recording: true }); this.log('info', 'Recording started', call.accountId);
   }
+  /** With Record Calls on, records a connected call from both sides. Simulated calls have no audio to record. */
+  private autoRecord(id: string) { const call = this.snapshot.calls.find(c => c.id === id); if (this.prefs.recordCalls && call?.answered && !call.recording && !call.demo) void this.record(id).catch(e => this.fail(e)); }
   private stopRecording(id: string) { const record = this.recorders.get(id); if (record && record.recorder.state !== 'inactive') record.recorder.stop(); this.recorders.delete(id); this.update(id, { recording: false }); }
   async sendMessage(accountId: string, peer: string, body: string) {
     if (this.nativeAccounts.has(accountId)) { const account = this.nativeAccounts.get(accountId)!; if (this.snapshot.connections[accountId]?.state !== 'registered') throw new Error('Connect this account first.'); const token = uid(); await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => { this.nativeMessages.delete(token); reject(new Error('Message delivery was not confirmed.')); }, 18000); this.nativeMessages.set(token, { resolve, reject, timer }); void window.desktop!.sipAction({ action: 'message', accountId, to: dialTarget(peer, `${account.domain}:${account.port}`), body, token }).catch(e => { clearTimeout(timer); this.nativeMessages.delete(token); reject(e); }); }); return; }

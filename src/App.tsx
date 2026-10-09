@@ -3,7 +3,7 @@ import { Minus, Square, X, TriangleAlert, Settings, ChevronDown, Moon, PhoneInco
 import type { Account, Call, ChatMessage, Contact, Credentials, HistoryItem, Pane, Preferences, UpdateState } from './types';
 import { deleteSecret, getSecret, loadData, saveData, saveSecret } from './lib/storage';
 import { accountLabel, copyText, errorText, parseVCard, samePeer, uid } from './lib/utils';
-import { phone } from './lib/phone';
+import { phone, simulated, testLine } from './lib/phone';
 import { ring } from './lib/tones';
 import { IconButton, Menu, StatusDot, type MenuState } from './components/UI';
 import AccountsPopover, { accountStatus, type AccountActions } from './components/Accounts';
@@ -20,7 +20,7 @@ const MAX_ACCOUNTS = 20;
 const tabs: { value: Pane; label: string; icon: LucideIcon }[] = [{ value: 'history', label: 'Recents', icon: Clock3 }, { value: 'contacts', label: 'Contacts', icon: Users }, { value: 'keypad', label: 'Keypad', icon: Grid3x3 }, { value: 'messages', label: 'Messages', icon: MessageSquare }, { value: 'activity', label: 'Activity', icon: Activity }];
 type SheetState =
   | { kind: 'account'; account: Account; mode: 'new' | 'edit' | 'duplicate'; secretFrom?: string }
-  | { kind: 'settings' } | { kind: 'transfer'; call: Call } | { kind: 'contact'; contact?: Contact }
+  | { kind: 'settings'; tab?: 'general' | 'audio' } | { kind: 'transfer'; call: Call } | { kind: 'contact'; contact?: Contact }
   | { kind: 'confirm'; title: string; message: string; confirm: string; destructive?: boolean; action: () => Promise<void> | void };
 const focusDial = () => setTimeout(() => document.getElementById('dial-number')?.focus());
 const sipAddress = (a: Account) => `sip:${a.username}@${a.domain}${a.transport === 'wss' ? '' : `:${a.port};transport=${a.transport}`}`;
@@ -99,7 +99,7 @@ export default function App() {
   keyRef.current = e => {
     if (sheetRef.current || accountsOpen || menu || e.defaultPrevented) return;
     const target = e.target as HTMLElement; const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
-    if (!(e.metaKey || e.ctrlKey || e.altKey) && !typing && data.pane !== 'keypad' && /^[0-9*#+]$/.test(e.key) && account) {
+    if (!(e.metaKey || e.ctrlKey || e.altKey) && !typing && data.pane !== 'keypad' && /^[0-9*#+]$/.test(e.key)) {
       e.preventDefault(); setPane('keypad');
       const live = snapshot.calls.find(c => c.id === focused && c.answered) || snapshot.calls.find(c => c.state === 'active');
       if (live && e.key !== '+') void phone.dtmf(live.id, e.key).catch(error => phone.fail(error)); else if (!snapshot.calls.length) { setNumber(n => n + e.key); focusDial(); }
@@ -127,9 +127,11 @@ export default function App() {
   const dial = async (target = number, video = false) => {
     const value = target.trim();
     if (!value) { const last = data.history.find(h => h.direction === 'outgoing'); if (last) setNumber(last.number); setPane('keypad'); focusDial(); return; }
-    if (!account) { newAccount(); return; }
-    const match = data.contacts.find(c => samePeer(c.number, value) || c.name.toLowerCase() === value.toLowerCase());
-    try { const id = await phone.dial(match?.number || value, match?.name || value, account.id, false, video); setFocused(id); setNumber(''); setEnded(null); setPane('keypad'); }
+    // The test line, and calls added to it, are simulated and need no account.
+    const demo = simulated(value, snapshot.calls);
+    if (!account && !demo) { newAccount(); return; }
+    const match = demo && value === testLine.number ? testLine : data.contacts.find(c => samePeer(c.number, value) || c.name.toLowerCase() === value.toLowerCase());
+    try { const id = await phone.dial(match?.number || value, match?.name || value, account?.id || '', demo, video && !demo); setFocused(id); setNumber(''); setEnded(null); setPane('keypad'); }
     catch (e) { phone.fail(e); }
   };
   const fill = (value: string) => { setNumber(value); setPane('keypad'); focusDial(); };
@@ -168,7 +170,7 @@ export default function App() {
     <main className="content">
       {data.pane === 'keypad' && <PhonePanel accounts={data.accounts} account={account} connections={snapshot.connections} register={actions.register} addAccount={newAccount}
         calls={snapshot.calls} focused={focused} setFocused={setFocused} number={number} setNumber={setNumber} dial={(target, video) => void dial(target, video)}
-        contacts={data.contacts} history={data.history} preferences={data.preferences}
+        contacts={data.contacts} history={data.history} preferences={data.preferences} setPreference={setPreference} openAudioSettings={() => openSheet({ kind: 'settings', tab: 'audio' })}
         voicemailCount={account ? snapshot.voicemail[account.id] || 0 : 0} voicemail={() => { if (account?.voicemail) void dial(account.voicemail); }}
         transfer={call => openSheet({ kind: 'transfer', call })} ended={ended} blocked={!!sheet || !!menu || accountsOpen} log={snapshot.log} />}
       {data.pane === 'history' && <HistoryPane history={data.history} contacts={data.contacts} fill={fill} dial={(n, video) => void dial(n, video)} openMenu={setMenu} recordingRefresh={recordingRefresh} toast={toast}
@@ -183,7 +185,7 @@ export default function App() {
     </button>)}</nav>
     {accountsOpen && <AccountsPopover accounts={data.accounts} connections={snapshot.connections} selected={account?.id} select={id => setData(d => ({ ...d, selectedAccount: id }))} add={newAccount} actions={actions} openMenu={setMenu} limit={MAX_ACCOUNTS} voicemail={snapshot.voicemail} preferences={data.preferences} setPreference={setPreference} onClose={() => setAccountsOpen(false)} />}
     {sheet?.kind === 'account' && <AccountSheet key={sheet.account.id} initial={sheet.account} mode={sheet.mode} secretFrom={sheet.secretFrom} onSave={saveAccount} onClose={() => setSheet(null)} />}
-    {sheet?.kind === 'settings' && <SettingsSheet preferences={data.preferences} setPreference={setPreference} update={update} onClose={() => setSheet(null)} />}
+    {sheet?.kind === 'settings' && <SettingsSheet initialTab={sheet.tab} preferences={data.preferences} setPreference={setPreference} update={update} onClose={() => setSheet(null)} />}
     {sheet?.kind === 'transfer' && <TransferSheet call={sheet.call} calls={snapshot.calls} onClose={() => setSheet(null)} />}
     {sheet?.kind === 'contact' && <ContactSheet contact={sheet.contact} number={sheet.contact ? '' : number} onSave={saveContact} onDelete={sheet.contact && (() => setData(d => ({ ...d, contacts: d.contacts.filter(c => c.id !== sheet.contact!.id) })))} onClose={() => setSheet(null)} />}
     {sheet?.kind === 'confirm' && <ConfirmSheet title={sheet.title} message={sheet.message} confirm={sheet.confirm} destructive={sheet.destructive} onConfirm={sheet.action} onClose={() => setSheet(null)} />}

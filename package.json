@@ -1,7 +1,7 @@
 {
   "name": "dialdev",
   "productName": "DialDev",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A desktop SIP softphone for QA and interoperability testing.",
   "author": "DialDev",
   "private": true,

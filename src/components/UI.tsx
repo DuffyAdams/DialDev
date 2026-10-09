@@ -11,6 +11,13 @@ export function Avatar({ name, size = 32 }: { name: string; size?: number }) {
   const text = /^[+\d*#]/.test(name) ? '' : initials(name);
   return <span className="avatar" style={{ width: size, height: size, fontSize: size * .38 }} aria-hidden="true">{text || <Phone size={size * .42} strokeWidth={1.75} />}</span>;
 }
+/** A level bar that runs from green into orange and red near the top. `level` is 0–1, or -1 when there is nothing to measure. */
+export function Meter({ level, label }: { level: number; label: string }) {
+  const value = Math.max(0, Math.min(1, level));
+  return <span className="meter" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value * 100)}>
+    <span className="meter-fill" style={{ clipPath: `inset(0 ${(1 - value) * 100}% 0 0 round 3px)` }} />
+  </span>;
+}
 export function StatusDot({ state }: { state?: Connection['state'] | 'disabled' }) { return <span className={`status-dot ${state || 'offline'}`} aria-hidden="true" />; }
 
 /** A macOS-style sheet: attached to the top of the window, dismissed with Escape or its own buttons. */
