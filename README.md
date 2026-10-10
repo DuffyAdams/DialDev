@@ -1,8 +1,31 @@
 # DialDev
 
-A desktop SIP softphone built for QA and interoperability testing. Point it at a SIP server, register one or more accounts, and start calling. The window is phone-shaped, like Bria or an iPhone. The title bar shows the active line (click it to switch or manage accounts) and has Settings in the top-right corner. The dial pad and call screen sit in the middle, and a tab bar along the bottom switches between Recents, Contacts, Keypad, Messages and Activity. Built with Electron, React, TypeScript, a bundled Baresip native SIP engine, and SIP.js for WebRTC.
+A desktop SIP softphone for QA and interoperability testing, with multiple accounts and an activity log for SIP events, DTMF, and call transcripts. The application uses Electron, React, and TypeScript, with Baresip for native SIP and SIP.js for WebRTC.
+
+![DialDev: the light-mode dialer, dark-mode call controls with live captions, and the Activity timeline](docs/screenshots/overview.png)
+
+[Download for Mac](https://github.com/DuffyAdams/DevDial/releases/latest) · [Run from source](#run-from-source) · [Testing features](#testing-features) · [Screenshots](#screenshots)
 
 The included native binary targets **Apple Silicon macOS 14+**. The interface and Electron application support macOS, Windows, and Linux; native SIP binaries must be built for each additional OS/architecture. Those targets are configured but have not been validated on Windows, Linux, or Intel Macs.
+
+## Screenshots
+
+Actual app screens captured at 2× resolution with fictional accounts, calls, and transcripts. The examples show staged UI states; no live SIP service is connected. Click an image to inspect it at full size.
+
+| Active Call | Activity Log | Call History |
+| :---: | :---: | :---: |
+| [<img src="docs/screenshots/active-call.png" width="260" alt="Dark-mode active call with a live caption, sent DTMF digits, and mute, hold, transfer and add-call controls">](docs/screenshots/active-call.png) | [<img src="docs/screenshots/activity.png" width="260" alt="Activity timeline showing SIP signaling, a transcribed IVR prompt, and sent RFC 4733 DTMF digits">](docs/screenshots/activity.png) | [<img src="docs/screenshots/recents.png" width="260" alt="Recent calls with per-account durations, a missed call, and a 486 Busy Here result">](docs/screenshots/recents.png) |
+
+<details>
+<summary>Dialer and account switching</summary>
+
+| Dialer | SIP Accounts |
+| :---: | :---: |
+| [<img src="docs/screenshots/keypad.png" width="300" alt="Light-mode dialer with a matching Support IVR contact and a registered QA Lab line">](docs/screenshots/keypad.png) | [<img src="docs/screenshots/accounts.png" width="300" alt="Dark-mode account switcher with UDP, TLS and WSS lines, Do Not Disturb, and Auto Answer">](docs/screenshots/accounts.png) |
+
+The title bar shows the active line; click it to switch or manage accounts. The bottom tabs open Recents, Contacts, Keypad, Messages, and Activity.
+
+</details>
 
 ## Open the app
 
@@ -179,6 +202,8 @@ npm run dist:linux    # Linux AppImage, on a suitable build host
 ```
 
 ## Verification
+
+To regenerate the README images on macOS after UI changes, run `node scripts/capture-screenshots.cjs` after installing dependencies. The script launches a temporary Vite server and an isolated Electron profile, loads fictional fixtures into the real renderer, and writes the five screen captures and composed overview to `docs/screenshots/`. It blocks external requests and device permissions, then removes the temporary profile. The production app and your saved accounts are not used.
 
 ```sh
 npm test             # call lifecycle, logging, account parsing/validation, dialing, vCard, IPC validation

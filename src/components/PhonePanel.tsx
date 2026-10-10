@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Phone, PhoneOff, Delete, Mic, MicOff, Pause, Play, Plus, ArrowRightLeft, Merge, Split, Video, VideoOff, Voicemail, ArrowLeft, TriangleAlert, type LucideIcon } from 'lucide-react';
 import type { Account, Call, Connection, Contact, HistoryItem, LogEntry, Preferences } from '../types';
@@ -10,6 +10,44 @@ import AudioControls, { type AudioPanel } from './AudioControls';
 
 const keys = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
 const run = (action: () => unknown) => { try { void Promise.resolve(action()).catch(e => phone.fail(e)); } catch (e) { phone.fail(e); } };
+
+function DtmfDisplay({ digits, ready }: { digits: string; ready: boolean }) {
+  const track = useRef<HTMLSpanElement>(null); const measure = useRef<HTMLSpanElement>(null);
+  const [display, setDisplay] = useState({ text: digits, size: 28 });
+  useLayoutEffect(() => {
+    const container = track.current; const ruler = measure.current;
+    if (!container || !ruler) return;
+    const fit = () => {
+      const width = container.clientWidth;
+      if (!width || !digits) return;
+      const fits = (text: string, size: number) => {
+        ruler.textContent = text; ruler.style.fontSize = `${size}px`;
+        return ruler.getBoundingClientRect().width <= width;
+      };
+      // Keep the full history until it no longer fits at the smallest readable size.
+      let size = 28;
+      while (size > 15 && !fits(digits, size)) size--;
+      let text = digits;
+      if (!fits(text, size)) {
+        let low = 0; let high = digits.length;
+        while (low < high) {
+          const count = Math.ceil((low + high) / 2);
+          if (fits(`…${digits.slice(-count)}`, size)) low = count;
+          else high = count - 1;
+        }
+        text = `…${low ? digits.slice(-low) : ''}`;
+      }
+      setDisplay(previous => previous.text === text && previous.size === size ? previous : { text, size });
+    };
+    fit();
+    const observer = new ResizeObserver(fit); observer.observe(container);
+    return () => observer.disconnect();
+  }, [digits]);
+  return <span ref={track} className="dtmf-track">
+    <span ref={measure} className="dtmf-measure" aria-hidden="true" />
+    <span className="dtmf-text" style={digits ? { fontSize: display.size } : undefined} aria-live="polite" aria-label={digits || undefined} title={digits ? `DTMF digits sent on this call: ${digits}` : undefined}>{digits ? display.text : ready ? 'Keypad sends DTMF' : 'Waiting to connect…'}</span>
+  </span>;
+}
 
 /**
  * Phone keypad. Keys fire on press rather than release so fast mouse input is not lost, and each key's hit area fills its
@@ -140,7 +178,7 @@ export default function PhonePanel(p: Props) {
         </div>
         <div className={`number-field dtmf ${current.dtmf ? '' : 'idle'}`}>
           {audioControls(current)}
-          <span className="dtmf-text" aria-live="polite" title="DTMF digits sent on this call">{current.dtmf.slice(-32) || (dtmfReady ? 'Keypad sends DTMF' : 'Waiting to connect…')}</span>
+          <DtmfDisplay digits={current.dtmf} ready={dtmfReady} />
         </div>
         <Keypad press={digit} disabled={!dtmfReady} />
         <div className="screen-actions call-actions">
