@@ -13,6 +13,8 @@ type Props = {
   open: AudioPanel; setOpen: (panel: AudioPanel) => void; openSettings: () => void;
 };
 const isNative = (id: string) => id.startsWith('native:');
+/** The native engine opens the chosen devices on macOS; elsewhere it uses the system defaults. */
+const nativeDevices = window.desktop?.platform === 'darwin';
 const speakerBody = 'M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z';
 const waves: [string, number][] = [['M16 9a5 5 0 0 1 0 6', .08], ['M19.364 18.364a9 9 0 0 0 0-12.728', .42]];
 const svg = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
@@ -70,8 +72,8 @@ function AudioPopover({ anchor, label, onClose, children }: { anchor: React.RefO
 
 /**
  * Microphone and speaker buttons for the edges of a number field. Each glyph shows its live level and opens quick device and
- * volume controls. WebRTC calls are metered from the call itself. Native SIP calls use the Mac's default devices outside this page,
- * so their microphone is metered from the default input, and their speaker level is not available here.
+ * volume controls. WebRTC calls are metered from the call itself. Native SIP calls play outside this page, so their microphone is
+ * metered from the device they use, and their speaker level is not available here.
  */
 export default function AudioControls({ call, account, preferences: prefs, setPreference, open, setOpen, openSettings }: Props) {
   const micButton = useRef<HTMLButtonElement>(null); const speakerButton = useRef<HTMLButtonElement>(null);
@@ -79,8 +81,8 @@ export default function AudioControls({ call, account, preferences: prefs, setPr
   const live = !!call && call.state !== 'ringing';
   const native = call ? isNative(call.id) : !!account && account.transport !== 'wss';
   const media = useCallMedia(live && !call.demo && !isNative(call.id) ? call.id : undefined);
-  // Without the call's own stream, open the microphone the call is using: the Mac's default for native calls.
-  const mic = useMicrophone(!media.local && (live || open === 'mic'), live && native ? '' : prefs.input);
+  // Without the call's own stream, open the microphone the call is using.
+  const mic = useMicrophone(!media.local && (live || open === 'mic'), native && !nativeDevices ? '' : prefs.input);
   const devices = useDevices(mic.stream);
   const volume = volumeOf(prefs.volume);
   const micLevel = useLevel(media.local || mic.stream);
@@ -92,11 +94,10 @@ export default function AudioControls({ call, account, preferences: prefs, setPr
   const setOutput = (id: string) => { setPreference('output', id); void phone.setOutput(id).catch(e => setError(errorText(e))); };
   const test = () => { setError(''); void playTestTone(prefs.output, volume, () => setTone(null)).then(setTone).catch(e => setError(errorText(e))); };
   const micStatus = call?.muted ? 'Muted' : call?.state === 'held' ? 'On Hold' : mic.error ? 'Unavailable' : micLevel >= 0 ? 'Live' : 'Starting…';
-  const micNote = live && native ? 'This call uses the Mac’s default microphone. Your choice applies to WebRTC calls.'
-    : live && !call.demo ? 'A new microphone takes effect from your next call.'
-    : native ? 'For WebRTC calls. UDP, TCP and TLS calls use the Mac’s default microphone.' : '';
-  const speakerNote = live && native ? 'This call plays through the Mac’s default output. Your choice and volume apply to WebRTC calls.'
-    : native ? 'For WebRTC calls and the test tone. UDP, TCP and TLS calls play through the Mac’s default output.' : '';
+  const micNote = native && !nativeDevices ? live ? 'This call uses the system default microphone. Your choice applies to WebRTC calls.' : 'For WebRTC calls. UDP, TCP and TLS calls use the system default microphone.'
+    : live && !native && !call.demo ? 'A new microphone takes effect from your next call.' : '';
+  const speakerNote = native && !nativeDevices ? live ? 'This call plays through the system default output. Your choice and volume apply to WebRTC calls.' : 'For WebRTC calls and the test tone. UDP, TCP and TLS calls play through the system default output.'
+    : native ? live ? 'Volume applies to WebRTC calls. Use the Mac’s volume for this call.' : 'Volume applies to WebRTC calls and the test tone.' : '';
   /** The devices of one kind as checkmark rows, like the Mac's Sound menu. System Default names the device it currently means. */
   const deviceList = (kind: MediaDeviceKind, fallback: string, value: string, select: (id: string) => void) => {
     const current = deviceName(devices.find(d => d.kind === kind && d.deviceId === 'default')?.label || '');

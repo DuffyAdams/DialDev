@@ -64,6 +64,7 @@ else {
     ipcMain.handle('sip:connect', async (event, account, secret) => { guard(event); if (!secret || typeof secret.password !== 'string' || secret.password.length > 4096) throw new Error('Invalid credentials.'); return nativeSip.connect(account, secret); });
     ipcMain.handle('sip:disconnect', async (event, id) => { guard(event); return nativeSip.disconnect(id); });
     ipcMain.handle('sip:action', async (event, payload) => { guard(event); return nativeSip.action(payload); });
+    ipcMain.handle('sip:devices', async (event, devices) => { guard(event); return nativeSip.setDevices(devices); });
     ipcMain.handle('sip:recording', async (event, token) => { guard(event); return nativeSip.readRecording(token); });
     ipcMain.handle('transcribe:info', async (event, locale) => { guard(event); return transcriber.info(locale); });
     ipcMain.handle('transcribe:start', async (event, key, locale) => {

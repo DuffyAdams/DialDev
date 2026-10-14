@@ -2,6 +2,7 @@ import { Invitation, Inviter, Messager, Registerer, RegistererState, Session, Se
 import type { Account, Call, ChatMessage, Credentials, HistoryItem, LogEntry, NativeEvent, PhoneSnapshot, Preferences, TranscriptEvent, TranscriptionInfo } from '../types';
 import { accountLabel, dialTarget, errorText, uid, volumeOf } from './utils';
 import { defaults, recordings } from './storage';
+import { deviceName } from './audio';
 
 type Client = { ua: UserAgent; registerer: Registerer; account: Account; subscriber?: Subscriber; timer?: ReturnType<typeof setTimeout> };
 type Recorder = { recorder: MediaRecorder; context: AudioContext; started: number };
@@ -51,6 +52,7 @@ export class PhoneEngine {
     const previous = this.prefs; this.prefs = value;
     if (value.transcribeLocale !== previous.transcribeLocale) this.transcription = undefined;
     if (value.recordCalls && !previous.recordCalls) for (const call of this.snapshot.calls) this.autoRecord(call.id);
+    if ((value.input !== previous.input || value.output !== previous.output) && this.nativeAccounts.size) void this.nativeDevices();
     if (value.volume !== previous.volume) for (const audio of this.audio.values()) audio.volume = volumeOf(value.volume);
     if (value.transcribe !== previous.transcribe) for (const call of this.snapshot.calls) { if (!value.transcribe) this.stopTranscript(call.id); else if (call.answered || (this.isNative(call.id) && call.direction === 'outgoing')) void this.transcribe(call.id); }
   }
@@ -100,7 +102,7 @@ export class PhoneEngine {
     try {
       if (account.transport !== 'wss') {
         if (!window.desktop) throw new Error('Standard SIP accounts require the desktop app.');
-        this.nativeAccounts.set(account.id, account);
+        this.nativeAccounts.set(account.id, account); await this.nativeDevices();
         await window.desktop.sipConnect(account, credentials);
         return;
       }
@@ -196,6 +198,7 @@ export class PhoneEngine {
       const a = this.nativeAccounts.get(accountId)!; this.nativeDialing = { name, number, accountId };
       try {
         const uri = dialTarget(number, `${a.domain}:${a.port}`);
+        await this.nativeDevices();
         const nativeId = await window.desktop!.sipAction({ action: 'dial', accountId, to: uri });
         const id = `native:${nativeId}`;
         if (!this.snapshot.calls.some(c => c.id === id)) this.emit({ calls: [...this.snapshot.calls, { id, accountId, name: name || number, number, uri, direction: 'outgoing', state: 'dialing', started: Date.now(), muted: false, video: false, cameraOff: false, recording: false, conference: false, demo: false, dtmf: '' }] });
@@ -275,8 +278,20 @@ export class PhoneEngine {
     if (this.preferences.output) void audio.setSinkId?.(this.preferences.output).catch(e => this.fail(e));
     const play = () => { void audio!.play().catch(() => {}); }; handler.remoteMediaStream.addEventListener('addtrack', play); play();
   }
+  /**
+   * Has the native engine use the chosen microphone and speaker. It knows devices by their Core Audio names, not by this page's
+   * device IDs. A device that is unplugged, or unnamed before microphone access is granted, means the Mac's default.
+   */
+  private async nativeDevices() {
+    if (!window.desktop?.sipDevices) return;
+    try {
+      const devices = this.prefs.input || this.prefs.output ? await navigator.mediaDevices.enumerateDevices() : [];
+      const name = (kind: MediaDeviceKind, id: string) => id ? deviceName(devices.find(d => d.kind === kind && d.deviceId === id)?.label || '') : '';
+      await window.desktop.sipDevices({ input: name('audioinput', this.prefs.input), output: name('audiooutput', this.prefs.output) });
+    } catch (e) { this.log('warning', `Couldn’t switch audio devices: ${errorText(e)}`); }
+  }
   getMedia(id: string) { return { local: this.handler(id)?.localMediaStream, remote: this.handler(id)?.remoteMediaStream }; }
-  async answer(id: string, video = false) { const call = this.call(id); this.log('info', 'Answering', call.accountId); for (const other of this.snapshot.calls.filter(c => c.id !== id && c.state === 'active')) await this.hold(other.id, true); if (call.demo) { this.clearDemo(id); this.update(id, { state: 'active', answered: Date.now() }); if (call.number === testLine.number) this.demoLater(id, 800, c => this.say(c, 'Hi, this is the DialDev test line calling you back.', ...testMenu)); return; } if (this.isNative(id)) { void this.transcribe(id); await this.nativeAction('answer', id); return; } const session = this.sessions.get(id); if (session instanceof Invitation) { this.update(id, { video }); await session.accept({ sessionDescriptionHandlerOptions: { constraints: this.constraints(video) } }); } }
+  async answer(id: string, video = false) { const call = this.call(id); this.log('info', 'Answering', call.accountId); for (const other of this.snapshot.calls.filter(c => c.id !== id && c.state === 'active')) await this.hold(other.id, true); if (call.demo) { this.clearDemo(id); this.update(id, { state: 'active', answered: Date.now() }); if (call.number === testLine.number) this.demoLater(id, 800, c => this.say(c, 'Hi, this is the DialDev test line calling you back.', ...testMenu)); return; } if (this.isNative(id)) { await this.nativeDevices(); void this.transcribe(id); await this.nativeAction('answer', id); return; } const session = this.sessions.get(id); if (session instanceof Invitation) { this.update(id, { video }); await session.accept({ sessionDescriptionHandlerOptions: { constraints: this.constraints(video) } }); } }
   async end(id: string) {
     const call = this.call(id); this.log('info', call.state === 'ringing' && call.direction === 'incoming' ? 'Declined' : call.answered ? 'Hung up' : 'Cancelled', call.accountId);
     if (call.demo) { this.finish(id); return; } if (this.isNative(id)) { await this.nativeAction('end', id); return; }

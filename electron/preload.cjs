@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('desktop', {
   sipConnect: (account, secret) => ipcRenderer.invoke('sip:connect', account, secret),
   sipDisconnect: id => ipcRenderer.invoke('sip:disconnect', id),
   sipAction: payload => ipcRenderer.invoke('sip:action', payload),
+  sipDevices: devices => ipcRenderer.invoke('sip:devices', devices),
   sipRecording: token => ipcRenderer.invoke('sip:recording', token),
   transcriptionInfo: locale => ipcRenderer.invoke('transcribe:info', locale),
   transcribeStart: (key, locale) => ipcRenderer.invoke('transcribe:start', key, locale),

@@ -38,7 +38,7 @@ function mixWav(local, remote) {
   return out;
 }
 class NativeSip {
-  constructor({ binary, directory, emit, test = false }) { this.binary = binary; this.directory = directory; this.emit = emit; this.test = test; this.accounts = new Map(); this.pending = new Map(); this.recordingIds = new Set(); this.auth = crypto.randomBytes(32).toString('hex'); this.starting = null; this.queue = Promise.resolve(); }
+  constructor({ binary, directory, emit, test = false }) { this.binary = binary; this.directory = directory; this.emit = emit; this.test = test; this.accounts = new Map(); this.pending = new Map(); this.recordingIds = new Set(); this.auth = crypto.randomBytes(32).toString('hex'); this.starting = null; this.queue = Promise.resolve(); this.devices = { input: '', output: '' }; }
   async start() { if (this.socket && !this.socket.destroyed) return; if (this.starting) return this.starting; this.starting = this.boot().finally(() => { this.starting = null; }); return this.starting; }
   async boot() {
     try { await fs.access(this.binary); } catch { throw new Error(`Native SIP is not built for ${process.platform}/${process.arch}. Use a WebRTC account, or build the native engine for this platform.`); }
@@ -62,6 +62,7 @@ class NativeSip {
     let buffer = Buffer.alloc(0); this.socket.on('data', chunk => { try { buffer = decodeFrames(Buffer.concat([buffer, chunk]), frame => this.receive(frame)); } catch { this.socket.destroy(); this.child.kill(); } });
     this.socket.on('error', () => { this.child?.kill(); });
     await this.request('about', '');
+    if (this.devices.input || this.devices.output) await this.applyDevices();
   }
   request(command, params) { return new Promise((resolve, reject) => { if (!this.socket || this.socket.destroyed) { reject(new Error('Native SIP is offline.')); return; } const token = crypto.randomUUID(); const body = Buffer.from(JSON.stringify({ command, params, token, auth: this.auth })); if (body.length > 16000) { reject(new Error('The request is too large.')); return; } const timer = setTimeout(() => { this.pending.delete(token); reject(new Error('Native SIP request timed out.')); }, 12000); this.pending.set(token, { resolve, reject, timer }); this.socket.write(Buffer.concat([Buffer.from(`${body.length}:`), body, Buffer.from(',')])); }); }
   async command(payload) { return this.request('dialdev', JSON.stringify(payload)); }
@@ -81,6 +82,20 @@ class NativeSip {
     else if (frame.type === 'REGISTERING') this.emit({ kind: 'connection', accountId, state: 'connecting' });
     else if (frame.message) this.emit({ kind: 'message', accountId, peer: frame.from, body: frame.body });
     else this.emit({ kind: 'event', accountId, ...frame });
+  }
+  /**
+   * Uses the microphone and speaker with these Core Audio names ('' for the Mac's default), in calls in progress and from the next call.
+   * Only the macOS driver opens devices by name; elsewhere the engine keeps the system defaults.
+   */
+  async setDevices(devices) {
+    const name = value => { if (typeof value !== 'string' || value.length > 120 || /[\r\n]/.test(value)) throw new Error('Invalid audio device.'); return value; };
+    this.devices = { input: name(devices?.input), output: name(devices?.output) };
+    if (this.socket && !this.socket.destroyed) await this.applyDevices();
+  }
+  async applyDevices() {
+    if (this.test || process.platform !== 'darwin') return;
+    await this.request('ausrc', `audiounit,${this.devices.input || 'default'}`);
+    await this.request('auplay', `audiounit,${this.devices.output || 'default'}`);
   }
   /** Has the engine look for changed network addresses now (a VPN going up or down) instead of at its next poll, so retrying doesn't reuse sockets bound to an address that no longer exists. */
   async refreshNetwork() { await this.request('netchange', '').catch(() => {}); }

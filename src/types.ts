@@ -27,6 +27,7 @@ declare global {
       storageNamespace: string;
       sipConnect: (account: Account, secret: Credentials) => Promise<void>;
       sipDisconnect: (id: string) => Promise<void>;
+      sipDevices: (devices: { input: string; output: string }) => Promise<void>;
       sipAction: (payload: { action: string; accountId?: string; call?: string; other?: string; to?: string; body?: string; token?: string }) => Promise<string>;
       sipRecording: (token: string) => Promise<Uint8Array<ArrayBuffer>>;
       transcriptionInfo: (locale: string) => Promise<TranscriptionInfo>;

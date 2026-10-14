@@ -67,7 +67,7 @@ export default function SettingsSheet({ initialTab = 'general', preferences: pre
         <ToggleRow label="Echo Cancellation" checked={prefs.echoCancellation} onChange={v => set('echoCancellation', v)} />
         <ToggleRow label="Noise Suppression" checked={prefs.noiseSuppression} onChange={v => set('noiseSuppression', v)} />
       </div>
-      <p className="form-note">Device choices, volume and processing apply to WebRTC (WSS) calls. UDP, TCP and TLS calls use the system default input and output.</p>
+      <p className="form-note">{window.desktop?.platform === 'darwin' ? 'Microphone and speaker apply to every call. Volume and processing apply to WebRTC (WSS) calls.' : 'Device choices, volume and processing apply to WebRTC (WSS) calls. UDP, TCP and TLS calls use the system default input and output.'}</p>
     </>}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="sheet-actions"><span className="sheet-version">DialDev {update?.current || __APP_VERSION__}</span><span className="spacer" /><button type="button" className="button primary" onClick={onClose}>Done</button></div>
