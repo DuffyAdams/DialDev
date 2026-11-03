@@ -17,12 +17,14 @@ const speech = async (directory, text) => { const file = path.join(directory, `$
   const sipSocket = dgram.createSocket('udp4'); const rtp = dgram.createSocket('udp4');
   await new Promise(r => sipSocket.bind(0, '127.0.0.1', r)); await new Promise(r => rtp.bind(0, '127.0.0.1', r));
   const port = sipSocket.address().port, rtpPort = rtp.address().port;
-  const events = [], requests = []; let authVerified = false, audioPackets = 0, dtmfPackets = 0, registration, echo = true, engineRtp;
+  const events = [], requests = []; let authVerified = false, audioPackets = 0, dtmfPackets = 0, g729Packets = 0, g729Malformed = 0, registration, echo = true, engineRtp;
   const password = 'local-test-"quoted;password';
-  rtp.on('message', (packet, remote) => { const pt = packet[1] & 127; if (pt === 101) dtmfPackets++; else audioPackets++; engineRtp = remote; if (!echo) return; const copy = Buffer.from(packet); if (copy.length >= 12) copy.writeUInt32BE(123456, 8); rtp.send(copy, remote.port, remote.address); });
+  rtp.on('message', (packet, remote) => { const pt = packet[1] & 127; if (pt === 101) dtmfPackets++; else audioPackets++; if (pt === 18) { g729Packets++; if (packet.length <= 12 || (packet.length - 12) % 10) g729Malformed++; } engineRtp = remote; if (!echo) return; const copy = Buffer.from(packet); if (copy.length >= 12) copy.writeUInt32BE(123456, 8); rtp.send(copy, remote.port, remote.address); });
   const parse = text => { const header = text.split('\r\n\r\n')[0]; const field = name => header.match(new RegExp(`^${name}:\\s*(.*)$`, 'mi'))?.[1] || ''; return { text, field, method: text.split(' ')[0], uri: text.split(' ')[1] }; };
   const response = (r, remote, code, reason, extra = '', body = '') => { const to = r.field('To').includes(';tag=') ? r.field('To') : `${r.field('To')};tag=local-test`; const text = `SIP/2.0 ${code} ${reason}\r\nVia: ${r.field('Via')}\r\nFrom: ${r.field('From')}\r\nTo: ${to}\r\nCall-ID: ${r.field('Call-ID')}\r\nCSeq: ${r.field('CSeq')}\r\n${extra}Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`; sipSocket.send(text, remote.port, remote.address); };
-  const sdp = () => `v=0\r\no=test 1 1 IN IP4 127.0.0.1\r\ns=Local integration\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio ${rtpPort} RTP/AVP 0 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-16\r\na=sendrecv\r\n`;
+  /** The local PBX answers G.729 when an offer lists it first, and PCMU otherwise. */
+  const sdp = (g729 = false) => `v=0\r\no=test 1 1 IN IP4 127.0.0.1\r\ns=Local integration\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio ${rtpPort} RTP/AVP ${g729 ? 18 : 0} 101\r\n${g729 ? 'a=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\n' : 'a=rtpmap:0 PCMU/8000\r\n'}a=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-16\r\na=sendrecv\r\n`;
+  const offered = text => text.match(/^m=audio \d+ RTP\/AVP ([\d ]+)/m)?.[1].trim().split(' ') ?? [];
   sipSocket.on('message', (packet, remote) => { const r = parse(packet.toString()); requests.push(r);
     if (r.method === 'REGISTER') {
       const auth = r.field('Authorization');
@@ -34,7 +36,7 @@ const speech = async (directory, text) => { const file = path.join(directory, `$
       return response(r, remote, authVerified ? 200 : 403, authVerified ? 'OK' : 'Forbidden', `Contact: ${r.field('Contact')}\r\nExpires: 300\r\n`);
     }
     if (r.method === 'SUBSCRIBE') return response(r, remote, 489, 'Bad Event');
-    if (r.method === 'INVITE') return response(r, remote, 200, 'OK', `Contact: <sip:200@127.0.0.1:${port}>\r\nContent-Type: application/sdp\r\n`, sdp());
+    if (r.method === 'INVITE') return response(r, remote, 200, 'OK', `Contact: <sip:200@127.0.0.1:${port}>\r\nContent-Type: application/sdp\r\n`, sdp(offered(r.text)[0] === '18'));
     if (r.method === 'BYE' || r.method === 'CANCEL') return response(r, remote, 200, 'OK');
     if (r.method === 'MESSAGE') return response(r, remote, r.text.endsWith('reject me') ? 403 : 202, r.text.endsWith('reject me') ? 'Forbidden' : 'Accepted');
   });
@@ -65,6 +67,21 @@ const speech = async (directory, text) => { const file = path.join(directory, `$
     await sip.action({ action: 'end', call: outboundId }); await wait(() => events.find(e => e.id === outboundId && e.type === 'CALL_CLOSED'), 'outbound-only hangup');
     await sip.disconnect('outbound-account'); await sip.refreshNetwork();
     assert.equal(requests.filter(r => r.method === 'REGISTER').length, registers); console.log('PASS Outbound-only account calls without registering');
+    await sip.connect({ id: 'g729-account', name: 'G.729 only', username: '1003', authUser: '1003', domain: '127.0.0.1', port: String(port), transport: 'udp', proxy: '', stun: '', displayName: '', mediaEncryption: 'none', outboundOnly: true, audioCodecs: 'g729-only' }, { password });
+    await wait(() => events.find(e => e.kind === 'connection' && e.accountId === 'g729-account' && e.state === 'registered'), 'G.729 account ready');
+    const g729Id = await sip.action({ action: 'dial', accountId: 'g729-account', to: `sip:200@127.0.0.1:${port}` });
+    const g729Offer = await wait(() => requests.find(r => r.method === 'INVITE' && r.field('Call-ID') === g729Id), 'G.729 INVITE');
+    const formats = offered(g729Offer.text); assert.equal(formats[0], '18', 'G.729 offered first'); assert.ok(!formats.some(pt => pt === '0' || pt === '8'), `only G.729 offered (${formats})`); assert.match(g729Offer.text, /a=rtpmap:18 G729\/8000/i);
+    await wait(() => events.find(e => e.id === g729Id && e.type === 'CALL_ESTABLISHED'), 'G.729 call established');
+    await wait(() => g729Packets > 20, 'G.729 RTP flow'); assert.equal(g729Malformed, 0, 'G.729 payloads are whole 10-byte frames');
+    assert.equal((await wait(() => events.find(e => e.id === g729Id && e.type === 'CALL_CODEC'), 'codec report')).param, 'G729/8000');
+    await sip.action({ action: 'record', call: g729Id, token: 'g729-recording' }); await new Promise(r => setTimeout(r, 1000));
+    await sip.action({ action: 'record-stop', call: g729Id }); await wait(() => events.find(e => e.kind === 'recording' && e.token === 'g729-recording'), 'G.729 recording');
+    // The PBX echoes the engine's 440 Hz tone, so the remote (right) channel is G.729 the engine decoded.
+    const g729Wav = await sip.readRecording('g729-recording'); let decoded = 0; for (let i = 46; i < g729Wav.length; i += 4) decoded += Math.abs(g729Wav.readInt16LE(i));
+    assert.ok(decoded / ((g729Wav.length - 44) / 4) > 100, 'decoded G.729 audio is not silent');
+    await sip.action({ action: 'end', call: g729Id }); await wait(() => events.find(e => e.id === g729Id && e.type === 'CALL_CLOSED'), 'G.729 hangup');
+    await sip.disconnect('g729-account'); console.log(`PASS G.729-only call: offer, 10-byte frames, codec report, and decoded audio (${g729Packets} packets)`);
     const transcriber = new Transcriber({ binary: path.resolve('native/darwin-arm64/dialdev-transcribe'), directory: path.join(directory, 'recordings'), emit: e => events.push(e) });
     const info = await transcriber.info('en-US');
     if (!info.available) console.log(`SKIP Live transcription: ${info.reason}`);

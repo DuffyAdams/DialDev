@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight, Eye, EyeOff } from 'lucide-react';
-import type { Account, Credentials, Transport } from '../types';
+import type { Account, AudioCodecs, Credentials, Transport } from '../types';
 import { getSecret } from '../lib/storage';
 import { defaultPort, errorText, parseSipInput, uid } from '../lib/utils';
 import { IconButton, Segmented, Sheet, ToggleRow } from './UI';
 
 export const blankAccount = (): Account => ({ id: uid(), name: '', username: '', domain: '', server: '', authUser: '', displayName: '', voicemail: '', stun: '', turn: '', turnUser: '', enabled: true, transport: window.desktop ? 'udp' : 'wss', port: '5060', proxy: '', mediaEncryption: 'none' });
 const hostPattern = /^(?:[a-zA-Z0-9.-]+|\[[a-fA-F\d:]+\])$/;
+const codecOptions: { value: AudioCodecs; label: string }[] = [{ value: 'default', label: 'Default' }, { value: 'prefer-g729', label: 'Prefer G.729' }, { value: 'g729-only', label: 'G.729 only' }];
 const transports: { value: Transport; label: string; disabled?: boolean }[] = [{ value: 'udp', label: 'UDP', disabled: !window.desktop }, { value: 'tcp', label: 'TCP', disabled: !window.desktop }, { value: 'tls', label: 'TLS', disabled: !window.desktop }, { value: 'wss', label: 'WSS' }];
 
 /** Validates and normalises the form into an account the engines accept. */
@@ -32,7 +33,7 @@ type Props = { initial: Account; mode: 'new' | 'edit' | 'duplicate'; secretFrom?
 export default function AccountSheet({ initial, mode, secretFrom, onSave, onClose }: Props) {
   const [draft, setDraft] = useState(initial); const [secret, setSecret] = useState<Credentials>({ password: '', turnPassword: '' });
   const [remember, setRemember] = useState(!!window.desktop); const [reveal, setReveal] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
-  const [advanced, setAdvanced] = useState(() => !!(initial.authUser || initial.displayName || initial.proxy || initial.stun || initial.turn || initial.voicemail || initial.outboundOnly || initial.mediaEncryption !== 'none'));
+  const [advanced, setAdvanced] = useState(() => !!(initial.authUser || initial.displayName || initial.proxy || initial.stun || initial.turn || initial.voicemail || initial.outboundOnly || initial.mediaEncryption !== 'none' || (initial.audioCodecs ?? 'default') !== 'default'));
   useEffect(() => { if (secretFrom) void getSecret(secretFrom).then(stored => { if (stored) setSecret(stored); }).catch(e => setError(errorText(e))); }, [secretFrom]);
   const set = <K extends keyof Account>(key: K, value: Account[K]) => setDraft(d => ({ ...d, [key]: value }));
   const transport = (value: Transport) => setDraft(d => ({ ...d, transport: value, port: !d.port || d.port === defaultPort(d.transport) ? defaultPort(value) : d.port }));
@@ -74,6 +75,7 @@ export default function AccountSheet({ initial, mode, secretFrom, onSave, onClos
           <label className="form-row"><span className="row-label">Caller ID Name</span><input value={draft.displayName} placeholder="None" onChange={e => set('displayName', e.target.value)} /></label>
           {!wss && <label className="form-row"><span className="row-label">Outbound Proxy</span><input value={draft.proxy} placeholder="None" spellCheck={false} autoComplete="off" onChange={e => set('proxy', e.target.value)} /></label>}
           {!wss && <div className="form-row"><span className="row-label">Media</span><Segmented label="Media encryption" value={draft.mediaEncryption} options={[{ value: 'none', label: 'RTP' }, { value: 'srtp', label: 'SRTP required' }]} onChange={v => set('mediaEncryption', v)} /></div>}
+          {!wss && <label className="form-row"><span className="row-label">Audio Codecs</span><select value={draft.audioCodecs ?? 'default'} onChange={e => set('audioCodecs', e.target.value as AudioCodecs)}>{codecOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>}
           <label className="form-row"><span className="row-label">STUN Server</span><input value={draft.stun} placeholder="None" spellCheck={false} autoComplete="off" onChange={e => set('stun', e.target.value)} /></label>
           {wss && <>
             <label className="form-row"><span className="row-label">TURN Server</span><input value={draft.turn} placeholder="None" spellCheck={false} autoComplete="off" onChange={e => set('turn', e.target.value)} /></label>

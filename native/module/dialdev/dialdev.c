@@ -124,7 +124,18 @@ static int transcribe_call(struct call *call, const char *token, bool start) {
  out: mtx_unlock(&capture_lock); return err;
 #endif
 }
-static void event_handler(enum bevent_ev ev, struct bevent *event, void *arg) { (void)arg; if (ev == BEVENT_CALL_CLOSED) { struct call *call = bevent_get_call(event); if (call) { (void)record_call(call, NULL, false); (void)transcribe_call(call, NULL, false); } } }
+/* Reports the negotiated audio codec as "NAME/rate", or "NAME/rate sending, NAME/rate receiving" when the directions differ. */
+static void report_codec(struct call *call) {
+  const struct aucodec *tx = audio_codec(call_audio(call), true), *rx = audio_codec(call_audio(call), false);
+  if (!tx && !rx) return;
+  if (tx && rx && tx != rx) module_event("dialdev", "codec", call_get_ua(call), call, "%s/%u sending, %s/%u receiving", tx->name, tx->srate, rx->name, rx->srate);
+  else { const struct aucodec *ac = tx ? tx : rx; module_event("dialdev", "codec", call_get_ua(call), call, "%s/%u", ac->name, ac->srate); }
+}
+static void event_handler(enum bevent_ev ev, struct bevent *event, void *arg) {
+  (void)arg; struct call *call = bevent_get_call(event); if (!call) return;
+  if (ev == BEVENT_CALL_CLOSED) { (void)record_call(call, NULL, false); (void)transcribe_call(call, NULL, false); }
+  else if (ev == BEVENT_CALL_RTPESTAB) report_codec(call);
+}
 static void message_response(int err, const struct sip_msg *msg, void *arg) { char *token = arg; if (!err && msg && msg->scode < 200) return; module_event("dialdev", "message", NULL, NULL, "%s %u", token, err ? 503 : msg ? msg->scode : 503); mem_deref(token); }
 static int command(struct re_printf *pf, void *arg) {
   struct cmd_arg *carg = arg; struct odict *od = NULL; int err = json_decode_odict(&od, 32, carg->prm, str_len(carg->prm), 8); if (err) return err;

@@ -94,7 +94,7 @@ Shortcut: paste a SIP URI such as `sip:1001@pbx.example.com:5080;transport=tcp` 
 
 For a WebRTC account choose **WSS** and enter the server's full secure WebSocket URL, such as `wss://pbx.example.com:8089/ws`. The SIP domain is taken from the URL when left blank. The PBX must accept WebRTC SDP, ICE and DTLS-SRTP, with a trusted TLS certificate.
 
-Native audio negotiates **Opus, PCMU, or PCMA**. Native TLS validates the server's certificate using the bundled CA set; certificate validation is never disabled. TLS encrypts signaling; native media encryption requires selecting SRTP and server support. WebRTC uses DTLS-SRTP.
+Native audio negotiates **Opus, PCMU, or PCMA** by default. For G.729 testing, set **Audio Codecs** in an account's advanced settings to **Prefer G.729** (G.729 first, then the defaults) or **G.729 only** (calls fail with 488 if the far end can't do G.729). G.729 is G.729 Annex A from [bcg729](https://github.com/BelledonneCommunications/bcg729), sent without voice-activity detection (`annexb=no`); Annex B comfort-noise frames from the far end are decoded. WSS accounts can't use G.729 because WebRTC doesn't support it. The activity log shows each call's negotiated codec, such as `Audio codec · G729/8000`. Native TLS validates the server's certificate using the bundled CA set; certificate validation is never disabled. TLS encrypts signaling; native media encryption requires selecting SRTP and server support. WebRTC uses DTLS-SRTP.
 
 ## Testing features
 
@@ -171,7 +171,7 @@ Public distribution still needs your product identity, Apple Developer signing/n
 
 ## Build native SIP
 
-The Apple Silicon native binary is included. Rebuilding uses pinned, checksum-verified Baresip 4.12.0, libre 4.12.0, and Opus 1.5.2 sources. The DialDev adapter is in `native/module/dialdev/`.
+The Apple Silicon native binary is included. Rebuilding uses pinned, checksum-verified Baresip 4.12.0, libre 4.12.0, Opus 1.5.2, and bcg729 1.1.1 sources. bcg729 is GPL-3.0-or-later, so the native engine binary that links it is distributed under GPL-3.0-or-later (see `native/licenses/bcg729.txt`). The DialDev adapter is in `native/module/dialdev/` and the G.729 codec in `native/module/g729/`.
 
 Requirements: C/C++ compiler, CMake, Python 3, `tar`, OpenSSL development/static libraries; Linux also needs PulseAudio development headers and pkg-config. Windows requires the corresponding native toolchain and dependency libraries (for example, vcpkg).
 

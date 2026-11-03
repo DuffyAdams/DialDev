@@ -5,6 +5,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const tls = require('node:tls');
 
+/** The audio codecs each account preference offers, best first. G.729 needs the g729 engine module, and only native accounts can use it: WebRTC has no G.729. */
+const audioCodecs = { default: 'opus/48000/2,pcmu/8000/1,pcma/8000/1', 'prefer-g729': 'g729/8000/1,opus/48000/2,pcmu/8000/1,pcma/8000/1', 'g729-only': 'g729/8000/1' };
 function validateAccount(a) {
   if (!a || !/^[a-zA-Z0-9-]{1,80}$/.test(a.id)) throw new Error('Invalid account.');
   if (!['udp', 'tcp', 'tls'].includes(a.transport)) throw new Error('Choose UDP, TCP, or TLS for native SIP.');
@@ -13,11 +15,12 @@ function validateAccount(a) {
   if (typeof a.username !== 'string' || !a.username || a.username.length > 256 || /[\r\n]/.test(a.username)) throw new Error('Invalid SIP username.');
   if (a.proxy && !/^sips?:[a-zA-Z0-9_.:@;=+\[\]-]+$/.test(a.proxy)) throw new Error('Enter a valid outbound SIP proxy URI.');
   if (a.stun && !/^stuns?:[a-zA-Z0-9_.:\[\]-]+$/.test(a.stun)) throw new Error('Enter a valid STUN server URI.');
+  if (a.audioCodecs !== undefined && !(typeof a.audioCodecs === 'string' && Object.hasOwn(audioCodecs, a.audioCodecs))) throw new Error('Choose a supported audio codec preference.');
   return a;
 }
 function addressFor(a) {
   validateAccount(a);
-  return `<sip:${encodeURIComponent(a.username)}@${a.domain}:${a.port};transport=${a.transport}>;regint=${a.outboundOnly ? 0 : 300};answermode=manual;sip_autoanswer=no;dtmfmode=rtpevent;audio_codecs=opus/48000/2,pcmu/8000/1,pcma/8000/1${a.mediaEncryption === 'srtp' ? ';mediaenc=srtp-mand' : ''}${a.proxy ? `;outbound="${a.proxy}"` : ''}${a.stun ? `;medianat=stun;stunserver="${a.stun}"` : ''}`;
+  return `<sip:${encodeURIComponent(a.username)}@${a.domain}:${a.port};transport=${a.transport}>;regint=${a.outboundOnly ? 0 : 300};answermode=manual;sip_autoanswer=no;dtmfmode=rtpevent;audio_codecs=${audioCodecs[a.audioCodecs ?? 'default']}${a.mediaEncryption === 'srtp' ? ';mediaenc=srtp-mand' : ''}${a.proxy ? `;outbound="${a.proxy}"` : ''}${a.stun ? `;medianat=stun;stunserver="${a.stun}"` : ''}`;
 }
 function decodeFrames(buffer, receive) {
   while (buffer.length) {
@@ -46,7 +49,7 @@ class NativeSip {
     const port = await new Promise((resolve, reject) => { const server = net.createServer(); server.on('error', reject); server.listen(0, '127.0.0.1', () => { const p = server.address().port; server.close(() => resolve(p)); }); });
     const caFile = path.join(this.directory, 'trusted-ca.pem'); await fs.writeFile(caFile, tls.rootCertificates.join('\n'));
     const audio = this.test ? 'aufile' : process.platform === 'darwin' ? 'audiounit' : process.platform === 'win32' ? 'winwave' : 'pulse';
-    const config = [...(this.test ? ['net_interface 127.0.0.1', 'sip_listen 127.0.0.1:0'] : []), `sip_transports udp,tcp,tls`, `sip_verify_server yes`, `sip_cafile ${caFile}`, 'call_max_calls 5', 'call_hold_other_calls no', 'call_local_timeout 60', 'call_accept no', `audio_source ${this.test ? 'ausine,440' : audio + ',default'}`, `audio_player ${this.test ? 'aubridge,test' : audio + ',default'}`, `audio_alert ${audio},default`, 'ausrc_format s16', 'auplay_format s16', 'auenc_format s16', 'audec_format s16', 'audio_jitter_buffer_type adaptive', 'audio_jitter_buffer_ms 40-160', 'audio_buffer 20-160', 'rtp_stats no', 'ring_aufile none', 'ringback_aufile none', 'callwaiting_aufile none', 'message_sound no', 'sip_trace no', 'netroam_interval 5', `ctrl_tcp_listen 127.0.0.1:${port}`, ...[audio, ...(this.test ? ['ausine', 'aubridge'] : []), 'aufile', 'g711', 'opus', 'uuid', 'stun', 'turn', 'ice', 'srtp', 'dtls_srtp', 'mixminus'].filter((x, i, list) => list.indexOf(x) === i).map(m => `module ${m}.so`), 'module_app menu.so', 'module_app dialdev.so', 'module_app mwi.so', 'module_app netroam.so', 'module_app ctrl_tcp.so'].join('\n') + '\n';
+    const config = [...(this.test ? ['net_interface 127.0.0.1', 'sip_listen 127.0.0.1:0'] : []), `sip_transports udp,tcp,tls`, `sip_verify_server yes`, `sip_cafile ${caFile}`, 'call_max_calls 5', 'call_hold_other_calls no', 'call_local_timeout 60', 'call_accept no', `audio_source ${this.test ? 'ausine,440' : audio + ',default'}`, `audio_player ${this.test ? 'aubridge,test' : audio + ',default'}`, `audio_alert ${audio},default`, 'ausrc_format s16', 'auplay_format s16', 'auenc_format s16', 'audec_format s16', 'audio_jitter_buffer_type adaptive', 'audio_jitter_buffer_ms 40-160', 'audio_buffer 20-160', 'rtp_stats no', 'ring_aufile none', 'ringback_aufile none', 'callwaiting_aufile none', 'message_sound no', 'sip_trace no', 'netroam_interval 5', `ctrl_tcp_listen 127.0.0.1:${port}`, ...[audio, ...(this.test ? ['ausine', 'aubridge'] : []), 'aufile', 'g711', 'opus', 'g729', 'uuid', 'stun', 'turn', 'ice', 'srtp', 'dtls_srtp', 'mixminus'].filter((x, i, list) => list.indexOf(x) === i).map(m => `module ${m}.so`), 'module_app menu.so', 'module_app dialdev.so', 'module_app mwi.so', 'module_app netroam.so', 'module_app ctrl_tcp.so'].join('\n') + '\n';
     await fs.writeFile(path.join(this.directory, 'config'), config, { mode: 0o600 });
     this.child = spawn(this.binary, ['-f', this.directory], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DIALDEV_CTRL_TOKEN: this.auth, DIALDEV_REC_DIR: this.recordDir } });
     // Drain logs without storing caller information, credentials, or SIP traces.
@@ -72,6 +75,8 @@ class NativeSip {
       const [, event, ...rest] = frame.param.split(','); const param = rest.join(',');
       if (event === 'recording' || event === 'recording-error') { if (this.recordingIds.has(param)) { this.emit({ kind: event, token: param }); } return; }
       if (event === 'message') { const [token, status] = param.split(' '); this.emit({ kind: 'message-status', token, status: Number(status) }); return; }
+      // The codec a call negotiated, reported as a call event once its media starts.
+      if (event === 'codec') frame = { ...frame, type: 'CALL_CODEC', param };
     }
     let accountId; const aor = frame.accountaor || frame.ua;
     for (const [id, account] of this.accounts) if (account.aor === aor || (aor && account.expected === aor.split(';')[0])) { accountId = id; break; }

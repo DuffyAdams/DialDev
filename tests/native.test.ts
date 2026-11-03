@@ -6,6 +6,13 @@ const account = { id: 'test-1', username: 'user', domain: 'sip.example.com', tra
 describe('native IPC boundaries', () => {
   it('keeps passwords out of SIP account address strings', () => { const address = addressFor({ ...account, password: 'secret' }); expect(address).not.toContain('secret'); expect(address).toContain('transport=tls'); expect(address).toContain('mediaenc=srtp-mand'); });
   it('registers every 5 minutes, or not at all for outbound-only accounts', () => { expect(addressFor(account)).toContain(';regint=300;'); expect(addressFor({ ...account, outboundOnly: true })).toContain(';regint=0;'); });
+  it('offers Opus, PCMU and PCMA by default, and G.729 when the account asks for it', () => {
+    const codecs = (a: object) => addressFor({ ...account, ...a }).match(/;audio_codecs=([^;]*)/)?.[1];
+    expect(codecs({})).toBe('opus/48000/2,pcmu/8000/1,pcma/8000/1'); expect(codecs({ audioCodecs: 'default' })).toBe(codecs({}));
+    expect(codecs({ audioCodecs: 'prefer-g729' })).toBe('g729/8000/1,opus/48000/2,pcmu/8000/1,pcma/8000/1');
+    expect(codecs({ audioCodecs: 'g729-only' })).toBe('g729/8000/1');
+  });
+  it('rejects unknown codec preferences', () => { for (const audioCodecs of ['g729;module evil.so', 'toString', 'G729', 5, null]) expect(() => validateAccount({ ...account, audioCodecs })).toThrow(); });
   it('rejects account-file injection, invalid ports and transport downgrade', () => { for (const fields of [{ domain: 'pbx\nmodule evil.so' }, { proxy: 'sip:pbx>;auth_pass=evil' }, { port: '65536' }, { transport: 'ws' }, { id: '../secret' }]) expect(() => validateAccount({ ...account, ...fields })).toThrow(); });
   it('parses partial and coalesced netstrings with UTF-8 bodies', () => { const object = { body: 'Héllo' }; const body = Buffer.from(JSON.stringify(object)); const frame = Buffer.concat([Buffer.from(`${body.length}:`), body, Buffer.from(',')]); const received: unknown[] = []; let remaining = decodeFrames(frame.subarray(0, 8), (x: unknown) => received.push(x)); expect(received).toHaveLength(0); remaining = decodeFrames(Buffer.concat([remaining, frame.subarray(8), frame]), (x: unknown) => received.push(x)); expect(received).toEqual([object, object]); expect(remaining.length).toBe(0); });
   it('rejects malformed and oversized netstrings', () => { for (const frame of ['x:xx,', '99999999:', '2:{}!', '1234567890']) expect(() => decodeFrames(Buffer.from(frame), () => {})).toThrow(); });

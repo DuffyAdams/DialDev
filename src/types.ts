@@ -1,5 +1,6 @@
 export type Transport = 'udp' | 'tcp' | 'tls' | 'wss';
-export type Account = { id: string; name: string; username: string; domain: string; server: string; authUser: string; displayName: string; voicemail: string; stun: string; turn: string; turnUser: string; enabled: boolean; transport: Transport; port: string; proxy: string; mediaEncryption: 'none' | 'srtp'; /** Places calls without registering, for providers that authenticate each call. */ outboundOnly?: boolean };
+export type AudioCodecs = 'default' | 'prefer-g729' | 'g729-only';
+export type Account = { id: string; name: string; username: string; domain: string; server: string; authUser: string; displayName: string; voicemail: string; stun: string; turn: string; turnUser: string; enabled: boolean; transport: Transport; port: string; proxy: string; mediaEncryption: 'none' | 'srtp'; /** Places calls without registering, for providers that authenticate each call. */ outboundOnly?: boolean; /** Native accounts only: which audio codecs to offer. Absent means 'default' (Opus, PCMU, PCMA). */ audioCodecs?: AudioCodecs };
 export type Credentials = { password: string; turnPassword: string };
 export type Contact = { id: string; name: string; number: string; email: string; company: string; favorite: boolean; color: string; group: string };
 export type HistoryItem = { id: string; name: string; number: string; direction: 'incoming' | 'outgoing' | 'missed'; time: number; duration: number; account: string; accountId?: string; video: boolean; reason?: string };
