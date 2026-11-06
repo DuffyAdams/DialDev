@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import { Phone, PhoneOff, Delete, Mic, MicOff, Pause, Play, Plus, ArrowRightLeft, Merge, Split, Video, VideoOff, Voicemail, ArrowLeft, TriangleAlert, type LucideIcon } from 'lucide-react';
-import type { Account, Call, Connection, Contact, HistoryItem, LogEntry, Preferences } from '../types';
+import { Phone, PhoneOff, Delete, Mic, MicOff, Pause, Play, Plus, ArrowRightLeft, Merge, Split, Video, VideoOff, Voicemail, ArrowLeft, TriangleAlert, SlidersHorizontal, Square, type LucideIcon } from 'lucide-react';
+import type { Account, Call, Connection, Contact, HistoryItem, LogEntry, Macro, Preferences } from '../types';
 import { phone, simulated, testLine } from '../lib/phone';
 import { keyTone } from '../lib/tones';
 import { accountLabel, duration, normalize } from '../lib/utils';
-import { Avatar, IconButton } from './UI';
+import { DTMF_INTERVAL, TYPE_INTERVAL, macroPlayer, macroSteps, playable } from '../lib/macros';
+import { Avatar, IconButton, menuAt, type MenuState } from './UI';
+import MacroBar from './MacroBar';
 import AudioControls, { type AudioPanel } from './AudioControls';
 
 const keys = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
@@ -51,9 +53,10 @@ function DtmfDisplay({ digits, ready }: { digits: string; ready: boolean }) {
 
 /**
  * Phone keypad. Keys fire on press rather than release so fast mouse input is not lost, and each key's hit area fills its
- * whole grid cell. 0 waits for release so that holding it (or right-clicking it) enters + instead.
+ * whole grid cell. 0 waits for release so that holding it (or right-clicking it) enters + instead. `lit` shows a key held
+ * down by a macro.
  */
-export function Keypad({ press, disabled = false }: { press: (key: string) => void; disabled?: boolean }) {
+export function Keypad({ press, disabled = false, lit }: { press: (key: string) => void; disabled?: boolean; lit?: string }) {
   const zero = useRef<{ timer?: ReturnType<typeof setTimeout>; down: boolean }>({ down: false });
   const down = (event: React.PointerEvent, key: string) => {
     if (event.button !== 0) return; event.preventDefault();
@@ -62,7 +65,7 @@ export function Keypad({ press, disabled = false }: { press: (key: string) => vo
   };
   const up = (key: string) => { if (key !== '0' || !zero.current.down) return; clearTimeout(zero.current.timer); zero.current.down = false; press('0'); };
   const cancel = () => { clearTimeout(zero.current.timer); zero.current.down = false; };
-  return <div className={`keypad ${disabled ? 'disabled' : ''}`}>{keys.map(([key, letters]) => <button type="button" key={key} className="key" disabled={disabled} aria-label={key === '*' ? 'Star' : key === '#' ? 'Pound' : key}
+  return <div className={`keypad ${disabled ? 'disabled' : ''}`}>{keys.map(([key, letters]) => <button type="button" key={key} className={`key ${lit === key || (lit === '+' && key === '0') ? 'lit' : ''}`} disabled={disabled} aria-label={key === '*' ? 'Star' : key === '#' ? 'Pound' : key}
     onPointerDown={e => down(e, key)} onPointerUp={() => up(key)} onPointerLeave={cancel}
     onClick={e => { if (e.detail === 0) press(key); }}
     onContextMenu={e => { if (key === '0') { e.preventDefault(); cancel(); press('+'); } }}>
@@ -83,6 +86,7 @@ type Props = {
   calls: Call[]; focused: string; setFocused: (id: string) => void; number: string; setNumber: Dispatch<SetStateAction<string>>; dial: (target?: string, video?: boolean) => void;
   contacts: Contact[]; history: HistoryItem[]; preferences: Preferences; setPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void; openAudioSettings: () => void;
   voicemailCount: number; voicemail: () => void; transfer: (call: Call) => void; ended: HistoryItem | null; blocked: boolean; log: LogEntry[];
+  macros: Macro[]; editMacros: () => void; openMenu: (menu: MenuState) => void;
 };
 /** The latest speech on a call from the last 20 seconds, trimmed to its end so the newest words show. */
 function Caption({ call, log, now }: { call: Call; log: LogEntry[]; now: number }) {
@@ -105,11 +109,42 @@ export default function PhonePanel(p: Props) {
   const tone = (key: string) => { if (p.preferences.sounds) keyTone(key); };
   const digit = (key: string) => { if (!current) return; tone(key); run(() => phone.dtmf(current.id, key)); };
   const press = (key: string) => { tone(key); p.setNumber(n => n + key); requestAnimationFrame(() => input.current?.focus()); };
+  // Macros type into the number field on the dial pad and send DTMF to the call on screen. One plays at a time; it stops when
+  // the screen moves to another call or between the dial pad and a call, and a DTMF macro stops if its call can no longer take digits.
+  const macros = useMemo(() => p.macros.filter(playable), [p.macros]);
+  const macroRun = useSyncExternalStore(macroPlayer.subscribe, macroPlayer.getSnapshot);
+  const macroTarget = showCall && current ? current.id : ''; const activeMacro = macroRun?.target === macroTarget ? macroRun : null;
+  const dtmfReady = !!current && (!!current.answered || current.progress === 'early');
+  const macrosReady = !showCall || (current?.state !== 'ringing' && dtmfReady);
+  useEffect(() => { if (macroRun && macroRun.target !== macroTarget) macroPlayer.stop(); }, [macroRun, macroTarget]);
+  const playMacro = (macro: Macro, event?: React.MouseEvent) => {
+    if (!macrosReady || (event && event.detail > 1)) return;
+    const running = activeMacro?.id === macro.id;
+    if (running && !macroTarget) return; // Already typing it; a double click shouldn't start it over.
+    if (running) { macroPlayer.stop(); return; }
+    const steps = macroSteps(macro.digits);
+    if (!macroTarget) { macroPlayer.play(macro.id, '', steps, press, TYPE_INTERVAL); return; }
+    const id = macroTarget;
+    macroPlayer.play(macro.id, id, steps.filter(key => key !== '+'), key => {
+      const call = phone.getSnapshot().calls.find(c => c.id === id);
+      if (!call || !(call.answered || call.progress === 'early')) return false;
+      tone(key); run(() => phone.dtmf(id, key));
+    }, DTMF_INTERVAL);
+  };
+  const macroMenu = (event: React.MouseEvent) => p.openMenu(menuAt(event, [
+    ...(activeMacro ? [{ label: 'Stop Macro', icon: Square, onClick: () => macroPlayer.stop() }, 'separator' as const] : []),
+    { label: 'Edit Macros…', icon: SlidersHorizontal, onClick: p.editMacros }
+  ]));
+  const macroBar = macros.length > 0 && <MacroBar macros={macros} run={activeMacro} disabled={!macrosReady} inCall={!!macroTarget} play={playMacro} menu={macroMenu} />;
   // Typing digits sends DTMF during a connected call, or edits the number when dialing.
   const keyRef = useRef<(event: KeyboardEvent) => void>(() => {});
   keyRef.current = event => {
-    if (p.blocked || audio || event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
+    if (p.blocked || audio || event.defaultPrevented) return;
     const target = event.target as HTMLElement; const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
+    // ⌥1–⌥9 play the first nine macros. Read the physical key, since Option changes the character typed on a Mac.
+    const shortcut = event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && /^Digit[1-9]$/.test(event.code) ? macros[Number(event.code.slice(5)) - 1] : undefined;
+    if (shortcut && (!typing || target === input.current)) { event.preventDefault(); if (!event.repeat) playMacro(shortcut); return; }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (live && !typing && /^[0-9*#]$/.test(event.key)) { event.preventDefault(); digit(event.key); return; }
     if (showCall || typing) return;
     if (/^[0-9*#+]$/.test(event.key)) { event.preventDefault(); press(event.key); }
@@ -133,7 +168,7 @@ export default function PhonePanel(p: Props) {
 
   // The dial pad and the call screen share one layout, so the keypad, number field and call button stay put when a call starts.
   // Room for the caption and call details is kept whenever they can appear, so they never move the keypad either.
-  const screen = `screen ${p.preferences.callDetails ? 'details' : ''} ${p.preferences.transcribe && p.preferences.captions && canCaption ? 'captions' : ''}`;
+  const screen = `screen ${p.preferences.callDetails ? 'details' : ''} ${p.preferences.transcribe && p.preferences.captions && canCaption ? 'captions' : ''} ${macros.length ? 'macros' : ''}`;
   const audioControls = (call?: Call) => <AudioControls call={call} account={p.account} preferences={p.preferences} setPreference={p.setPreference} open={audio} setOpen={setAudio} openSettings={p.openAudioSettings} />;
   const add = () => { setAdding(true); p.setNumber(''); };
   const strip = (p.calls.length > 1 || adding) && <div className="call-strip">{p.calls.map(c => <button type="button" key={c.id} className={`${c.id === current?.id && !adding ? 'selected' : ''} ${c.state}`} onClick={() => { p.setFocused(c.id); setAdding(false); }}>
@@ -167,7 +202,7 @@ export default function PhonePanel(p: Props) {
       merge ? { label: current.conference ? 'Split' : 'Merge', icon: current.conference ? Split : Merge, on: current.conference, action: () => current.conference ? phone.splitConference(current.id) : phone.merge() }
         : { label: 'Add', icon: Plus, action: add, enabled: p.calls.length < 5 }
     ];
-    const dtmfReady = answered || current.progress === 'early'; const captions = current.transcribing && p.preferences.captions;
+    const captions = current.transcribing && p.preferences.captions;
     return <section className="phone">{strip}<div className="screen-frame">
       <div className={`${screen} in-call`}>
         <div className="screen-top">
@@ -180,7 +215,8 @@ export default function PhonePanel(p: Props) {
           {audioControls(current)}
           <DtmfDisplay digits={current.dtmf} ready={dtmfReady} />
         </div>
-        <Keypad press={digit} disabled={!dtmfReady} />
+        {macroBar}
+        <Keypad press={digit} disabled={!dtmfReady} lit={activeMacro?.key} />
         <div className="screen-actions call-actions">
           {left.map(control)}
           <button type="button" className="round decline main-call" aria-label="End call" onClick={() => run(() => phone.end(current.id))}><PhoneOff size={28} /></button>
@@ -207,7 +243,8 @@ export default function PhonePanel(p: Props) {
           onChange={e => p.setNumber(e.target.value.replace(/[\r\n]/g, ''))} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); p.dial(); } if (e.key === 'Escape' && p.number) { e.preventDefault(); p.setNumber(''); } }} />
         {audioControls(p.calls.find(c => c.state === 'active'))}
       </div>
-      <Keypad press={press} />
+      {macroBar}
+      <Keypad press={press} lit={activeMacro?.key} />
       <div className="screen-actions dial-actions">
         <div className="dial-side">
           {p.account?.voicemail && <span className="dial-voicemail"><IconButton icon={Voicemail} label={p.voicemailCount ? `Voicemail (${p.voicemailCount} new)` : `Voicemail (${p.account.voicemail})`} size={22} onClick={p.voicemail} />{p.voicemailCount > 0 && <span className="badge">{p.voicemailCount}</span>}</span>}

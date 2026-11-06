@@ -184,11 +184,12 @@ html[data-platform=win32] .titlebar, html[data-platform=linux] .titlebar { grid-
 
 /* The dial pad and the call screen share one layout: a flexible top area, then the number field, keypad and call button at
    fixed sizes, pinned to the bottom, so none of them move when a call starts. --key-size follows the space left once room is kept
-   for the call header, plus the caption and call details when they can appear. */
+   for the call header, plus the caption, call details and macro buttons when they can appear. */
 .screen-frame { flex: 1; min-height: 0; container-type: size; }
-.screen { --caption-space: 0px; --details-space: 0px; --key-size: clamp(40px, min(23cqw, calc((100cqh - 280px - var(--caption-space) - var(--details-space)) / 4)), 88px); height: 100%; display: flex; flex-direction: column; align-items: center; padding: 12px 20px 16px; text-align: center; }
+.screen { --caption-space: 0px; --details-space: 0px; --macro-space: 0px; --key-size: clamp(40px, min(23cqw, calc((100cqh - 280px - var(--caption-space) - var(--details-space) - var(--macro-space)) / 4)), 88px); height: 100%; display: flex; flex-direction: column; align-items: center; padding: 12px 20px 16px; text-align: center; }
 .screen.captions { --caption-space: 44px; }
 .screen.details { --details-space: 19px; }
+.screen.macros { --macro-space: 34px; }
 .screen > * { flex-shrink: 0; }
 .screen-top { flex: 1 1 0; min-height: 0; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 10px; overflow: hidden; }
 .screen-top .video-stage { flex: 1 1 0; min-height: 72px; aspect-ratio: auto; }
@@ -266,6 +267,23 @@ html[data-platform=win32] .titlebar, html[data-platform=linux] .titlebar { grid-
 .key[aria-label=Star] .key-digit { font-size: calc(var(--key-size) * .46); transform: translateY(calc(var(--key-size) * .08)); }
 .key-letters { margin-top: calc(var(--key-size) * .04); font-size: max(8px, calc(var(--key-size) * .105)); font-weight: 600; letter-spacing: 1.6px; color: var(--label-2); }
 .keypad.disabled { opacity: .45; }
+.key.lit .key-face { background: var(--key-active); transition: none; }
+
+/* Macro buttons between the number field and the keypad: centered pills that scroll sideways, fading at an edge with more to show. */
+.macro-bar { width: min(100%, calc(var(--key-size) * 3 + 64px)); height: 30px; margin: -2px 0 6px; display: flex; }
+.macro-track { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: safe center; gap: 6px; margin: -4px 0; padding: 4px 3px; /* room for focus rings */ overflow-x: auto; overflow-y: hidden; scrollbar-width: none; scroll-padding: 0 24px; }
+.macro-track::-webkit-scrollbar { display: none; }
+.macro-track.fade-start { -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px); mask-image: linear-gradient(90deg, transparent, #000 24px); }
+.macro-track.fade-end { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+.macro-track.fade-start.fade-end { -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
+.macro { position: relative; flex-shrink: 0; max-width: 148px; height: 30px; padding: 0 13px; overflow: hidden; border-radius: 15px; background: var(--key); font-size: 12.5px; font-weight: 500; white-space: nowrap; transition: background .1s, color .15s; }
+.macro::before { content: ''; position: absolute; inset: 0; background: var(--accent-soft); transform: scaleX(var(--progress, 0)); transform-origin: left; opacity: 0; transition: transform .2s ease-out, opacity .2s; }
+.macro:hover:not(:disabled) { background: var(--key-hover); }
+.macro:active:not(:disabled) { background: var(--key-active); }
+.macro.running { color: var(--accent-text); }
+.macro.running::before { opacity: 1; }
+.macro-label { position: relative; display: block; overflow: hidden; text-overflow: ellipsis; }
+.macro:disabled { opacity: .45; }
 
 /* The bottom row: the call button on the dial pad, End with two controls either side during a call. It sits in the same place. */
 .screen-actions { width: min(100%, calc(var(--key-size) * 3 + 96px)); height: 76px; margin-top: 6px; display: grid; align-items: center; justify-items: center; }
@@ -321,8 +339,11 @@ html[data-platform=win32] .titlebar, html[data-platform=linux] .titlebar { grid-
 .video-stage .video-local { position: absolute; right: 8px; bottom: 8px; width: 30%; height: auto; aspect-ratio: 4 / 3; border-radius: 6px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .3); }
 
 @media (max-height: 680px) {
-  .screen { --key-size: clamp(38px, min(23cqw, calc((100cqh - 240px - var(--caption-space) - var(--details-space)) / 4)), 88px); padding: 8px 16px 10px; }
+  .screen { --key-size: clamp(38px, min(23cqw, calc((100cqh - 240px - var(--caption-space) - var(--details-space) - var(--macro-space)) / 4)), 88px); padding: 8px 16px 10px; }
   .screen.captions { --caption-space: 40px; }
+  .screen.macros { --macro-space: 30px; }
+  .macro-bar { height: 28px; margin: -2px 0 4px; }
+  .macro { height: 28px; padding: 0 12px; }
   .screen-top { padding-bottom: 8px; }
   .screen .number-field { height: 46px; margin-bottom: 8px; }
   .screen-actions { height: 62px; margin-top: 4px; }
@@ -433,6 +454,20 @@ html[data-platform=win32] .titlebar, html[data-platform=linux] .titlebar { grid-
 .disclosure { display: flex; align-items: center; gap: 4px; margin: 2px 0 10px; padding: 2px 4px; border-radius: 4px; font-size: 12px; font-weight: 600; color: var(--label-2); }
 .disclosure svg { transition: transform .15s; }
 .disclosure[aria-expanded=true] svg { transform: rotate(90deg); }
+/* Settings → Macros: one editable row per macro, reordered by its handle */
+.macro-row { gap: 8px; padding-left: 4px; }
+.macro-row.dragging { opacity: .45; }
+.macro-grip { width: 18px; height: 26px; flex-shrink: 0; display: grid; place-items: center; border-radius: 4px; color: var(--label-3); cursor: grab; }
+.macro-grip:hover { color: var(--label-2); background: var(--fill); }
+.macro-grip:active { cursor: grabbing; }
+.form-row input.macro-name { flex: 1 1 0; }
+.form-row input.macro-digits { flex: 1.35 1 0; font-variant-numeric: tabular-nums; letter-spacing: .3px; }
+.macro-row .macro-delete { width: 26px; height: 26px; }
+.macro-row .macro-delete:hover:not(:disabled) { color: var(--red-text); }
+.add-row { width: 100%; gap: 6px; font-size: 13px; font-weight: 500; color: var(--accent-text); text-align: left; border-radius: 0 0 8px 8px; }
+.add-row:only-child { border-radius: 8px; }
+.add-row:hover:not(:disabled) { background: var(--row-hover); }
+.add-row:disabled { color: var(--label-3); opacity: 1; }
 .form-note { margin: -2px 4px 12px; font-size: 11.5px; line-height: 1.45; color: var(--label-2); }
 .form-error { margin-bottom: 12px; padding: 8px 10px; border-radius: 6px; background: rgba(255, 59, 48, .1); font-size: 12px; line-height: 1.4; color: var(--red-text); user-select: text; }
 .sheet-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px; }

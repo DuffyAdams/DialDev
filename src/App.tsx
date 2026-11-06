@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Minus, Square, X, TriangleAlert, Settings, ChevronDown, Moon, PhoneIncoming, Clock3, Users, Grid3x3, MessageSquare, Activity, ChevronRight, type LucideIcon } from 'lucide-react';
-import type { Account, Call, ChatMessage, Contact, Credentials, HistoryItem, Pane, Preferences, UpdateState } from './types';
+import type { Account, AppData, Call, ChatMessage, Contact, Credentials, HistoryItem, Pane, Preferences, UpdateState } from './types';
 import { deleteSecret, getSecret, loadData, saveData, saveSecret } from './lib/storage';
 import { accountLabel, copyText, errorText, parseVCard, samePeer, uid } from './lib/utils';
+import { macroSteps } from './lib/macros';
 import { phone, simulated, testLine } from './lib/phone';
 import { ring } from './lib/tones';
 import { IconButton, Menu, StatusDot, type MenuState } from './components/UI';
 import AccountsPopover, { accountStatus, type AccountActions } from './components/Accounts';
 import PhonePanel, { callState } from './components/PhonePanel';
 import AccountSheet, { blankAccount } from './components/AccountSheet';
-import SettingsSheet from './components/SettingsSheet';
+import SettingsSheet, { type SettingsTab } from './components/SettingsSheet';
 import { ConfirmSheet, ContactSheet, TransferSheet } from './components/Sheets';
 import HistoryPane from './components/HistoryPane';
 import ActivityPane from './components/ActivityPane';
@@ -20,7 +21,7 @@ const MAX_ACCOUNTS = 20;
 const tabs: { value: Pane; label: string; icon: LucideIcon }[] = [{ value: 'history', label: 'Recents', icon: Clock3 }, { value: 'contacts', label: 'Contacts', icon: Users }, { value: 'keypad', label: 'Keypad', icon: Grid3x3 }, { value: 'messages', label: 'Messages', icon: MessageSquare }, { value: 'activity', label: 'Activity', icon: Activity }];
 type SheetState =
   | { kind: 'account'; account: Account; mode: 'new' | 'edit' | 'duplicate'; secretFrom?: string }
-  | { kind: 'settings'; tab?: 'general' | 'audio' } | { kind: 'transfer'; call: Call } | { kind: 'contact'; contact?: Contact }
+  | { kind: 'settings'; tab?: SettingsTab } | { kind: 'transfer'; call: Call } | { kind: 'contact'; contact?: Contact }
   | { kind: 'confirm'; title: string; message: string; confirm: string; destructive?: boolean; action: () => Promise<void> | void };
 const focusDial = () => setTimeout(() => document.getElementById('dial-number')?.focus());
 const sipAddress = (a: Account) => `sip:${a.username}@${a.domain}${a.transport === 'wss' ? '' : `:${a.port};transport=${a.transport}`}`;
@@ -47,6 +48,9 @@ export default function App() {
   const closeMenu = useCallback(() => setMenu(null), []);
   const setPreference = useCallback(<K extends keyof Preferences>(key: K, value: Preferences[K]) => setData(d => ({ ...d, preferences: { ...d.preferences, [key]: value } })), []);
   const setPane = useCallback((pane: Pane) => setData(d => ({ ...d, pane })), []);
+  const setMacros = useCallback((macros: AppData['macros']) => setData(d => ({ ...d, macros })), []);
+  // Rows left with no name and no keys are dropped when Settings closes.
+  const closeSettings = () => { setSheet(null); setData(d => d.macros.every(m => m.name.trim() || macroSteps(m.digits).length) ? d : { ...d, macros: d.macros.filter(m => m.name.trim() || macroSteps(m.digits).length) }); };
   const openSheet = useCallback((value: SheetState) => { setAccountsOpen(false); setMenu(null); setSheet(value); }, []);
   const account = data.accounts.find(a => a.id === data.selectedAccount) ?? data.accounts[0];
   const setEnabled = (id: string, enabled: boolean) => setData(d => ({ ...d, accounts: d.accounts.map(a => a.id === id ? { ...a, enabled } : a) }));
@@ -172,7 +176,8 @@ export default function App() {
         calls={snapshot.calls} focused={focused} setFocused={setFocused} number={number} setNumber={setNumber} dial={(target, video) => void dial(target, video)}
         contacts={data.contacts} history={data.history} preferences={data.preferences} setPreference={setPreference} openAudioSettings={() => openSheet({ kind: 'settings', tab: 'audio' })}
         voicemailCount={account ? snapshot.voicemail[account.id] || 0 : 0} voicemail={() => { if (account?.voicemail) void dial(account.voicemail); }}
-        transfer={call => openSheet({ kind: 'transfer', call })} ended={ended} blocked={!!sheet || !!menu || accountsOpen} log={snapshot.log} />}
+        transfer={call => openSheet({ kind: 'transfer', call })} ended={ended} blocked={!!sheet || !!menu || accountsOpen} log={snapshot.log}
+        macros={data.macros} editMacros={() => openSheet({ kind: 'settings', tab: 'macros' })} openMenu={setMenu} />}
       {data.pane === 'history' && <HistoryPane history={data.history} contacts={data.contacts} fill={fill} dial={(n, video) => void dial(n, video)} openMenu={setMenu} recordingRefresh={recordingRefresh} toast={toast}
         clear={() => openSheet({ kind: 'confirm', title: 'Clear call history?', message: 'All calls are removed from Recents on this computer. Recordings are kept.', confirm: 'Clear History', destructive: true, action: () => setData(d => ({ ...d, history: [] })) })}
         confirmDelete={(name, remove) => openSheet({ kind: 'confirm', title: 'Delete recording?', message: `The recording with ${name} is permanently deleted from this computer.`, confirm: 'Delete', destructive: true, action: remove })} />}
@@ -185,7 +190,7 @@ export default function App() {
     </button>)}</nav>
     {accountsOpen && <AccountsPopover accounts={data.accounts} connections={snapshot.connections} selected={account?.id} select={id => setData(d => ({ ...d, selectedAccount: id }))} add={newAccount} actions={actions} openMenu={setMenu} limit={MAX_ACCOUNTS} voicemail={snapshot.voicemail} preferences={data.preferences} setPreference={setPreference} onClose={() => setAccountsOpen(false)} />}
     {sheet?.kind === 'account' && <AccountSheet key={sheet.account.id} initial={sheet.account} mode={sheet.mode} secretFrom={sheet.secretFrom} onSave={saveAccount} onClose={() => setSheet(null)} />}
-    {sheet?.kind === 'settings' && <SettingsSheet initialTab={sheet.tab} preferences={data.preferences} setPreference={setPreference} update={update} onClose={() => setSheet(null)} />}
+    {sheet?.kind === 'settings' && <SettingsSheet initialTab={sheet.tab} preferences={data.preferences} setPreference={setPreference} macros={data.macros} setMacros={setMacros} update={update} onClose={closeSettings} />}
     {sheet?.kind === 'transfer' && <TransferSheet call={sheet.call} calls={snapshot.calls} onClose={() => setSheet(null)} />}
     {sheet?.kind === 'contact' && <ContactSheet contact={sheet.contact} number={sheet.contact ? '' : number} onSave={saveContact} onDelete={sheet.contact && (() => setData(d => ({ ...d, contacts: d.contacts.filter(c => c.id !== sheet.contact!.id) })))} onClose={() => setSheet(null)} />}
     {sheet?.kind === 'confirm' && <ConfirmSheet title={sheet.title} message={sheet.message} confirm={sheet.confirm} destructive={sheet.destructive} onConfirm={sheet.action} onClose={() => setSheet(null)} />}

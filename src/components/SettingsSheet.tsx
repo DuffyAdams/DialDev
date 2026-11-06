@@ -1,19 +1,56 @@
 import { useEffect, useState } from 'react';
-import type { Preferences, TranscriptionInfo, UpdateState } from '../types';
+import { GripVertical, Plus, Trash2 } from 'lucide-react';
+import type { Macro, Preferences, TranscriptionInfo, UpdateState } from '../types';
 import { phone } from '../lib/phone';
 import { deviceOptions, playTestTone, useDevices, useLevel, useMicrophone } from '../lib/audio';
-import { errorText, timeLabel, volumeOf } from '../lib/utils';
-import { Meter, Segmented, Sheet, ToggleRow } from './UI';
+import { MACRO_NAME_LENGTH, MAX_MACROS, cleanDigits, macroLabel } from '../lib/macros';
+import { errorText, timeLabel, uid, volumeOf } from '../lib/utils';
+import { IconButton, Meter, Segmented, Sheet, ToggleRow } from './UI';
 
-type Props = { initialTab?: 'general' | 'audio'; preferences: Preferences; setPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void; update: UpdateState | null; onClose: () => void };
+export type SettingsTab = 'general' | 'audio' | 'macros';
+type Props = { initialTab?: SettingsTab; preferences: Preferences; setPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void; macros: Macro[]; setMacros: (macros: Macro[]) => void; update: UpdateState | null; onClose: () => void };
 const updateNote = (u: UpdateState) => u.status === 'checking' ? 'Checking for updates…'
   : u.status === 'current' ? `DialDev ${u.current} is up to date.${u.checked ? ` Checked ${timeLabel(u.checked)}.` : ''}`
   : u.status === 'available' ? `DialDev ${u.version} is available. You have ${u.current}.${u.reason ? ` ${u.reason}` : ''}`
   : u.status === 'downloading' ? `Downloading DialDev ${u.version}… ${Math.round((u.progress || 0) * 100)}%`
   : u.status === 'installing' ? `Installing DialDev ${u.version}. It reopens when done.`
   : u.status === 'error' ? u.error || 'Couldn’t check for updates.' : `Version ${u.current}`;
-export default function SettingsSheet({ initialTab = 'general', preferences: prefs, setPreference, update, onClose }: Props) {
-  const [tab, setTab] = useState(initialTab); const [error, setError] = useState('');
+/**
+ * The Macros tab: one row per macro, edited in place. Drag a row by its handle to reorder, or focus the handle and use the arrow keys.
+ */
+function MacroSettings({ macros, setMacros }: { macros: Macro[]; setMacros: (macros: Macro[]) => void }) {
+  const [added, setAdded] = useState(''); const [dragging, setDragging] = useState('');
+  const edit = (id: string, change: Partial<Macro>) => setMacros(macros.map(m => m.id === id ? { ...m, ...change } : m));
+  const move = (id: string, to: number) => {
+    const from = macros.findIndex(m => m.id === id); if (from < 0 || to < 0 || to >= macros.length || from === to) return;
+    const next = [...macros]; const [item] = next.splice(from, 1); next.splice(to, 0, item); setMacros(next);
+  };
+  const add = () => { const macro = { id: uid(), name: '', digits: '' }; setMacros([...macros, macro]); setAdded(macro.id); };
+  return <>
+    <div className="form-group macro-list">
+      {macros.map((m, i) => {
+        const label = macroLabel(m) || `Macro ${i + 1}`;
+        return <div key={m.id} className={`form-row macro-row ${dragging === m.id ? 'dragging' : ''}`}
+          onDragOver={e => { if (!dragging) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; move(dragging, i); }} onDrop={e => e.preventDefault()}>
+          <button type="button" className="macro-grip" draggable title="Drag to reorder" aria-label={`Move ${label}. Use the up and down arrow keys.`}
+            onDragStart={e => { setDragging(m.id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', m.id); const row = e.currentTarget.parentElement; if (row) e.dataTransfer.setDragImage(row, 14, row.offsetHeight / 2); }}
+            onDragEnd={() => setDragging('')}
+            onKeyDown={e => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); move(m.id, i + (e.key === 'ArrowUp' ? -1 : 1)); } }}>
+            <GripVertical size={14} strokeWidth={1.75} />
+          </button>
+          <input className="macro-name" aria-label={`Macro ${i + 1} name`} placeholder="Name" maxLength={MACRO_NAME_LENGTH} spellCheck={false} autoFocus={m.id === added} value={m.name} onChange={e => edit(m.id, { name: e.target.value })} />
+          <input className="macro-digits" aria-label={`Macro ${i + 1} digits`} placeholder="Digits, e.g. 5551234567" inputMode="tel" autoComplete="off" spellCheck={false} value={m.digits} onChange={e => edit(m.id, { digits: cleanDigits(e.target.value) })} />
+          <IconButton icon={Trash2} label={`Delete ${label}`} size={14} className="macro-delete" onClick={() => setMacros(macros.filter(x => x.id !== m.id))} />
+        </div>;
+      })}
+      <button type="button" className="form-row add-row" disabled={macros.length >= MAX_MACROS} onClick={add}><Plus size={14} strokeWidth={2} />{macros.length >= MAX_MACROS ? `Up to ${MAX_MACROS} macros` : 'Add Macro'}</button>
+    </div>
+    <p className="form-note">Macros appear as buttons above the keypad. Click one to type its digits into the number field. During a call it sends them as DTMF tones instead. Use 0–9, * and #, plus + when dialing; a comma waits one second. ⌥1 – ⌥9 play the first nine.</p>
+  </>;
+}
+
+export default function SettingsSheet({ initialTab = 'general', preferences: prefs, setPreference, macros, setMacros, update, onClose }: Props) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab); const [error, setError] = useState('');
   const [testing, setTesting] = useState(false); const mic = useMicrophone(testing, prefs.input); const level = useLevel(mic.stream); const devices = useDevices(mic.stream);
   const [speech, setSpeech] = useState<{ system?: TranscriptionInfo; selected?: TranscriptionInfo }>({});
   useEffect(() => { void window.desktop?.transcriptionInfo?.('').then(system => setSpeech(s => ({ ...s, system }))).catch(e => setSpeech(s => ({ ...s, system: { available: false, reason: errorText(e), locales: [] } }))); }, []);
@@ -28,8 +65,8 @@ export default function SettingsSheet({ initialTab = 'general', preferences: pre
   const testSpeaker = () => { setError(''); void playTestTone(prefs.output, volumeOf(prefs.volume)).catch(e => setError(errorText(e))); };
   const options = (kind: MediaDeviceKind, fallback: string) => deviceOptions(devices, kind, fallback).map(d => <option key={d.id} value={d.id}>{d.label}</option>);
   return <Sheet title="Settings" width={500} onClose={onClose}>
-    <Segmented label="Settings section" className="wide" value={tab} onChange={value => { setTab(value); stopTest(); setError(''); }} options={[{ value: 'general', label: 'General' }, { value: 'audio', label: 'Audio' }]} />
-    {tab === 'general' ? <>
+    <Segmented label="Settings section" className="wide" value={tab} onChange={value => { setTab(value); stopTest(); setError(''); }} options={[{ value: 'general', label: 'General' }, { value: 'audio', label: 'Audio' }, { value: 'macros', label: 'Macros' }]} />
+    {tab === 'macros' ? <MacroSettings macros={macros} setMacros={setMacros} /> : tab === 'general' ? <>
       <div className="form-group">
         <div className="form-row"><span className="row-label">Appearance</span><Segmented label="Appearance" value={prefs.theme} onChange={v => set('theme', v)} options={[{ value: 'system', label: 'Auto' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} /></div>
         <ToggleRow label="Sounds" description="Ringtone and keypad tones." checked={prefs.sounds} onChange={v => set('sounds', v)} />

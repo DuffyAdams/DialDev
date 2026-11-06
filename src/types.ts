@@ -6,6 +6,8 @@ export type Contact = { id: string; name: string; number: string; email: string;
 export type HistoryItem = { id: string; name: string; number: string; direction: 'incoming' | 'outgoing' | 'missed'; time: number; duration: number; account: string; accountId?: string; video: boolean; reason?: string };
 export type ChatMessage = { id: string; peer: string; body: string; incoming: boolean; time: number; status: 'sent' | 'failed' | 'received' | 'sending'; accountId: string };
 export type Preferences = { theme: 'light' | 'dark' | 'system'; dnd: boolean; sounds: boolean; autoAnswer: boolean; forward: string; input: string; output: string; camera: string; echoCancellation: boolean; noiseSuppression: boolean; callDetails: boolean; transcribe: boolean; transcribeLocale: string; captions: boolean; checkUpdates: boolean; volume: number; recordCalls: boolean };
+/** A saved key sequence. Played on the dial pad it types `digits` into the number field; during a call it sends them as DTMF. */
+export type Macro = { id: string; name: string; digits: string };
 export type Recording = { id: string; name: string; number: string; time: number; duration: number; blob: Blob };
 export type Call = { id: string; accountId: string; name: string; number: string; uri?: string; direction: 'incoming' | 'outgoing'; state: 'ringing' | 'dialing' | 'active' | 'held'; started: number; answered?: number; muted: boolean; video: boolean; cameraOff: boolean; recording: boolean; conference: boolean; demo: boolean; dtmf: string; reason?: string; progress?: 'ringing' | 'early'; transcribing?: boolean };
 export type Connection = { state: 'offline' | 'connecting' | 'registered' | 'error'; detail?: string };
@@ -19,7 +21,7 @@ export type UpdateState = { status: 'idle' | 'checking' | 'current' | 'available
 export type PhoneSnapshot = { calls: Call[]; connections: Record<string, Connection>; voicemail: Record<string, number>; error: string | null; log: LogEntry[] };
 export type NativeEvent = { kind: string; accountId?: string; state?: Connection['state']; detail?: string; id?: string; type?: string; peer?: string; peeruri?: string; peerdisplayname?: string; direction?: string; param?: string; body?: string; token?: string; status?: number; audiodir?: string; localaudiodir?: string; call?: string; transcript?: TranscriptEvent };
 export type Pane = 'history' | 'contacts' | 'keypad' | 'messages' | 'activity';
-export type AppData = { version: 1; accounts: Account[]; contacts: Contact[]; history: HistoryItem[]; messages: ChatMessage[]; preferences: Preferences; selectedAccount: string; pane: Pane; recentsSeen: number };
+export type AppData = { version: 1; accounts: Account[]; contacts: Contact[]; history: HistoryItem[]; messages: ChatMessage[]; preferences: Preferences; selectedAccount: string; pane: Pane; recentsSeen: number; macros: Macro[] };
 declare global {
   const __APP_VERSION__: string;
   interface Window {
