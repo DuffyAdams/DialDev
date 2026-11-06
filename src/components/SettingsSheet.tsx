@@ -18,7 +18,7 @@ const updateNote = (u: UpdateState) => u.status === 'checking' ? 'Checking for u
 /**
  * The Macros tab: one row per macro, edited in place. Drag a row by its handle to reorder, or focus the handle and use the arrow keys.
  */
-function MacroSettings({ macros, setMacros }: { macros: Macro[]; setMacros: (macros: Macro[]) => void }) {
+function MacroSettings({ macros, setMacros, prefs, set }: { macros: Macro[]; setMacros: (macros: Macro[]) => void; prefs: Preferences; set: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void }) {
   const [added, setAdded] = useState(''); const [dragging, setDragging] = useState('');
   const edit = (id: string, change: Partial<Macro>) => setMacros(macros.map(m => m.id === id ? { ...m, ...change } : m));
   const move = (id: string, to: number) => {
@@ -46,6 +46,11 @@ function MacroSettings({ macros, setMacros }: { macros: Macro[]; setMacros: (mac
       <button type="button" className="form-row add-row" disabled={macros.length >= MAX_MACROS} onClick={add}><Plus size={14} strokeWidth={2} />{macros.length >= MAX_MACROS ? `Up to ${MAX_MACROS} macros` : 'Add Macro'}</button>
     </div>
     <p className="form-note">Macros appear as buttons above the keypad. Click one to type its digits into the number field. During a call it sends them as DTMF tones instead. Use 0–9, * and #, plus + when dialing; a comma waits one second. ⌥1 – ⌥9 play the first nine.</p>
+    <div className="form-group">
+      <div className="form-row"><span className="row-label">Typing Speed<small>On the dial pad</small></span><Segmented label="Typing speed" value={prefs.macroTyping} onChange={v => set('macroTyping', v)} options={[{ value: 'slow', label: 'Slow' }, { value: 'normal', label: 'Normal' }, { value: 'fast', label: 'Fast' }, { value: 'instant', label: 'Instant' }]} /></div>
+      <div className="form-row"><span className="row-label">DTMF Speed<small>During a call</small></span><Segmented label="DTMF speed" value={prefs.macroDtmf} onChange={v => set('macroDtmf', v)} options={[{ value: 'slow', label: 'Slow' }, { value: 'normal', label: 'Normal' }, { value: 'fast', label: 'Fast' }]} /></div>
+    </div>
+    <p className="form-note">Instant enters all the digits at once and skips pauses. Fast DTMF sends shorter 100 ms tones, which most systems accept; try Normal or Slow if digits go missing. UDP, TCP and TLS calls send at most about four digits a second.</p>
   </>;
 }
 
@@ -66,7 +71,7 @@ export default function SettingsSheet({ initialTab = 'general', preferences: pre
   const options = (kind: MediaDeviceKind, fallback: string) => deviceOptions(devices, kind, fallback).map(d => <option key={d.id} value={d.id}>{d.label}</option>);
   return <Sheet title="Settings" width={500} onClose={onClose}>
     <Segmented label="Settings section" className="wide" value={tab} onChange={value => { setTab(value); stopTest(); setError(''); }} options={[{ value: 'general', label: 'General' }, { value: 'audio', label: 'Audio' }, { value: 'macros', label: 'Macros' }]} />
-    {tab === 'macros' ? <MacroSettings macros={macros} setMacros={setMacros} /> : tab === 'general' ? <>
+    {tab === 'macros' ? <MacroSettings macros={macros} setMacros={setMacros} prefs={prefs} set={set} /> : tab === 'general' ? <>
       <div className="form-group">
         <div className="form-row"><span className="row-label">Appearance</span><Segmented label="Appearance" value={prefs.theme} onChange={v => set('theme', v)} options={[{ value: 'system', label: 'Auto' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} /></div>
         <ToggleRow label="Sounds" description="Ringtone and keypad tones." checked={prefs.sounds} onChange={v => set('sounds', v)} />

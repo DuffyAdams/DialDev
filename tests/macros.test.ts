@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_MACROS, MacroPlayer, PAUSE, cleanDigits, cleanMacros, macroLabel, macroSteps, playable } from '../src/lib/macros';
+import { MAX_MACROS, MacroPlayer, NATIVE_DTMF_INTERVAL, PAUSE, cleanDigits, cleanMacros, dtmfTiming, macroLabel, macroSteps, playable, typingInterval } from '../src/lib/macros';
 
 describe('macro digits', () => {
   it('keeps keypad characters, pauses and number formatting, and drops everything else', () => {
@@ -24,6 +24,27 @@ describe('macro digits', () => {
     expect(cleanMacros([null, { id: 1, name: 'x', digits: '1' }, { id: 'a', name: 'Cell', digits: '555 123abc' }, { id: 'b', name: 'n'.repeat(40), digits: '2', extra: true }]))
       .toEqual([{ id: 'a', name: 'Cell', digits: '555 123' }, { id: 'b', name: 'n'.repeat(24), digits: '2' }]);
     expect(cleanMacros(Array.from({ length: 30 }, (_, i) => ({ id: String(i), name: '', digits: '1' })))).toHaveLength(MAX_MACROS);
+  });
+});
+
+describe('macro speed', () => {
+  it('types faster as the speed goes up, with Instant entering everything at once', () => {
+    const [slow, normal, fast, instant] = (['slow', 'normal', 'fast', 'instant'] as const).map(typingInterval);
+    expect(slow).toBeGreaterThan(normal); expect(normal).toBe(80); expect(fast).toBeLessThan(normal); expect(instant).toBe(0);
+    expect(typingInterval('bogus')).toBe(80); expect(typingInterval('constructor')).toBe(80); expect(typingInterval(undefined)).toBe(80);
+  });
+  it('keeps the existing DTMF pace as Normal, and never sends a tone shorter than 100 ms', () => {
+    expect(dtmfTiming('normal', false)).toMatchObject({ tone: 160, interval: 260 });
+    expect(dtmfTiming('fast', false).interval).toBeLessThan(dtmfTiming('normal', false).interval);
+    expect(dtmfTiming('slow', false).interval).toBeGreaterThan(dtmfTiming('normal', false).interval);
+    for (const speed of ['slow', 'normal', 'fast', 'bogus']) expect(dtmfTiming(speed, false).tone).toBeGreaterThanOrEqual(100);
+  });
+  it('finishes each WebRTC tone and gap before the next digit, so the browser never replaces a queued digit', () => {
+    for (const speed of ['slow', 'normal', 'fast']) { const t = dtmfTiming(speed, false); expect(t.gap).toBeGreaterThanOrEqual(30); expect(t.tone + t.gap).toBeLessThan(t.interval); }
+  });
+  it('paces native calls no faster than the engine sends RFC 4733 events', () => {
+    for (const speed of ['slow', 'normal', 'fast']) expect(dtmfTiming(speed, true).interval).toBeGreaterThanOrEqual(NATIVE_DTMF_INTERVAL);
+    expect(dtmfTiming('slow', true).interval).toBe(dtmfTiming('slow', false).interval);
   });
 });
 

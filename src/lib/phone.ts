@@ -320,13 +320,14 @@ export class PhoneEngine {
     if (!call.demo) { const session = this.sessions.get(id); if (!session || session.state !== SessionState.Established) throw new Error('Wait for the call to connect.'); await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => reject(new Error('The provider did not confirm hold.')), 10000); void session.invite({ sessionDescriptionHandlerOptions: { hold: held } as Web.SessionDescriptionHandlerOptions, requestDelegate: { onAccept: () => { clearTimeout(timer); resolve(); }, onReject: () => { clearTimeout(timer); reject(new Error('The provider declined the hold request.')); } } }).catch(e => { clearTimeout(timer); reject(e); }); }); }
     this.update(id, { state: held ? 'held' : 'active' });
   }
-  async dtmf(id: string, digit: string) {
+  /** Sends one digit. `timing` sets the tone and gap on WebRTC calls (and the duration sent in SIP INFO); the native engine uses its own. */
+  async dtmf(id: string, digit: string, timing = { tone: 160, gap: 70 }) {
     if (!/^[0-9*#]$/.test(digit)) return; const call = this.call(id); this.update(id, { dtmf: (call.dtmf + digit).slice(-64) });
     const sender = this.handler(id)?.peerConnection?.getSenders().find(s => s.track?.kind === 'audio'); const rtp = this.isNative(id) || !!sender?.dtmf?.canInsertDTMF;
     this.log('info', `Sent DTMF ${digit}`, call.accountId, { kind: 'dtmf', side: 'local', callId: id, speaker: 'You', digit, detail: call.demo ? undefined : rtp ? 'RFC 4733' : 'SIP INFO' });
     if (call.demo) { if (call.number === testLine.number) { this.demoPrompts.set(id, (this.demoPrompts.get(id) || 0) + 1); this.demoLater(id, 700, c => this.testLineDigit(c, digit)); } return; }
     if (this.isNative(id)) { await this.nativeAction('dtmf', id, { to: digit }); return; }
-    if (sender?.dtmf?.canInsertDTMF) sender.dtmf.insertDTMF(digit, 160, 70); else await this.sessions.get(id)?.info({ requestOptions: { body: { contentDisposition: 'render', contentType: 'application/dtmf-relay', content: `Signal=${digit}\r\nDuration=160` } } });
+    if (sender?.dtmf?.canInsertDTMF) sender.dtmf.insertDTMF(digit, timing.tone, timing.gap); else await this.sessions.get(id)?.info({ requestOptions: { body: { contentDisposition: 'render', contentType: 'application/dtmf-relay', content: `Signal=${digit}\r\nDuration=${timing.tone}` } } });
   }
   async transfer(id: string, target: string, attendedId?: string) {
     const call = this.call(id); this.log('info', attendedId ? `Attended transfer of ${call.name}` : `Transfer of ${call.name} to ${target}`, call.accountId);

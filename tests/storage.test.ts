@@ -12,7 +12,7 @@ describe('saved data', () => {
     expect(data).not.toHaveProperty('demo');
   });
   it('starts with no macros and keeps well-formed saved ones', () => {
-    stored.clear(); expect(loadData().macros).toEqual([]);
+    stored.clear(); expect(loadData()).toMatchObject({ macros: [], preferences: { macroTyping: 'normal', macroDtmf: 'normal' } });
     stored.set('dialdev.v1', JSON.stringify({ version: 1, macros: [{ id: 'm1', name: 'My Cell', digits: '(555) 123-4567' }, { id: 2, digits: '1' }, 'bad'] }));
     expect(loadData().macros).toEqual([{ id: 'm1', name: 'My Cell', digits: '(555) 123-4567' }]);
   });

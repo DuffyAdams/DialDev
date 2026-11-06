@@ -5,7 +5,10 @@ export type Credentials = { password: string; turnPassword: string };
 export type Contact = { id: string; name: string; number: string; email: string; company: string; favorite: boolean; color: string; group: string };
 export type HistoryItem = { id: string; name: string; number: string; direction: 'incoming' | 'outgoing' | 'missed'; time: number; duration: number; account: string; accountId?: string; video: boolean; reason?: string };
 export type ChatMessage = { id: string; peer: string; body: string; incoming: boolean; time: number; status: 'sent' | 'failed' | 'received' | 'sending'; accountId: string };
-export type Preferences = { theme: 'light' | 'dark' | 'system'; dnd: boolean; sounds: boolean; autoAnswer: boolean; forward: string; input: string; output: string; camera: string; echoCancellation: boolean; noiseSuppression: boolean; callDetails: boolean; transcribe: boolean; transcribeLocale: string; captions: boolean; checkUpdates: boolean; volume: number; recordCalls: boolean };
+/** How fast a macro types on the dial pad, and how fast it sends DTMF during a call. */
+export type TypingSpeed = 'slow' | 'normal' | 'fast' | 'instant';
+export type DtmfSpeed = 'slow' | 'normal' | 'fast';
+export type Preferences = { theme: 'light' | 'dark' | 'system'; dnd: boolean; sounds: boolean; autoAnswer: boolean; forward: string; input: string; output: string; camera: string; echoCancellation: boolean; noiseSuppression: boolean; callDetails: boolean; transcribe: boolean; transcribeLocale: string; captions: boolean; checkUpdates: boolean; volume: number; recordCalls: boolean; macroTyping: TypingSpeed; macroDtmf: DtmfSpeed };
 /** A saved key sequence. Played on the dial pad it types `digits` into the number field; during a call it sends them as DTMF. */
 export type Macro = { id: string; name: string; digits: string };
 export type Recording = { id: string; name: string; number: string; time: number; duration: number; blob: Blob };

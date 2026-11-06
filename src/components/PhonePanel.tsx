@@ -5,7 +5,7 @@ import type { Account, Call, Connection, Contact, HistoryItem, LogEntry, Macro, 
 import { phone, simulated, testLine } from '../lib/phone';
 import { keyTone } from '../lib/tones';
 import { accountLabel, duration, normalize } from '../lib/utils';
-import { DTMF_INTERVAL, TYPE_INTERVAL, macroPlayer, macroSteps, playable } from '../lib/macros';
+import { dtmfTiming, macroPlayer, macroSteps, playable, typingInterval } from '../lib/macros';
 import { Avatar, IconButton, menuAt, type MenuState } from './UI';
 import MacroBar from './MacroBar';
 import AudioControls, { type AudioPanel } from './AudioControls';
@@ -106,7 +106,7 @@ export default function PhonePanel(p: Props) {
   const hasCalls = p.calls.length > 0;
   useEffect(() => { if (!hasCalls) return; setNow(Date.now()); const timer = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(timer); }, [hasCalls]);
   useEffect(() => { setAdding(false); }, [p.calls.length]);
-  const tone = (key: string) => { if (p.preferences.sounds) keyTone(key); };
+  const tone = (key: string, length?: number) => { if (p.preferences.sounds) keyTone(key, length); };
   const digit = (key: string) => { if (!current) return; tone(key); run(() => phone.dtmf(current.id, key)); };
   const press = (key: string) => { tone(key); p.setNumber(n => n + key); requestAnimationFrame(() => input.current?.focus()); };
   // Macros type into the number field on the dial pad and send DTMF to the call on screen. One plays at a time; it stops when
@@ -122,14 +122,20 @@ export default function PhonePanel(p: Props) {
     const running = activeMacro?.id === macro.id;
     if (running && !macroTarget) return; // Already typing it; a double click shouldn't start it over.
     if (running) { macroPlayer.stop(); return; }
+    // Key tones are cut to the macro's pace so fast macros don't stack them up.
     const steps = macroSteps(macro.digits);
-    if (!macroTarget) { macroPlayer.play(macro.id, '', steps, press, TYPE_INTERVAL); return; }
-    const id = macroTarget;
+    if (!macroTarget) {
+      const interval = typingInterval(p.preferences.macroTyping);
+      if (interval) { macroPlayer.play(macro.id, '', steps, key => { tone(key, interval * .9 / 1000); p.setNumber(n => n + key); requestAnimationFrame(() => input.current?.focus()); }, interval); return; }
+      // Instant enters every key at once and skips pauses.
+      const keys = steps.filter(key => key !== ','); macroPlayer.stop(); tone(keys[0]); p.setNumber(n => n + keys.join('')); requestAnimationFrame(() => input.current?.focus()); return;
+    }
+    const id = macroTarget; const timing = dtmfTiming(p.preferences.macroDtmf, id.startsWith('native:'));
     macroPlayer.play(macro.id, id, steps.filter(key => key !== '+'), key => {
       const call = phone.getSnapshot().calls.find(c => c.id === id);
       if (!call || !(call.answered || call.progress === 'early')) return false;
-      tone(key); run(() => phone.dtmf(id, key));
-    }, DTMF_INTERVAL);
+      tone(key, timing.tone / 1000); run(() => phone.dtmf(id, key, timing));
+    }, timing.interval);
   };
   const macroMenu = (event: React.MouseEvent) => p.openMenu(menuAt(event, [
     ...(activeMacro ? [{ label: 'Stop Macro', icon: Square, onClick: () => macroPlayer.stop() }, 'separator' as const] : []),

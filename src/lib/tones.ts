@@ -10,7 +10,8 @@ function play(frequencies: number[], start: number, length: number, volume: numb
     oscillator.connect(gain).connect(audio.destination); oscillator.start(start); oscillator.stop(start + length + .01);
   }
 }
-export function keyTone(key: string) { const pair = dtmfPairs[key]; if (!pair) return; try { const audio = context(); play(pair, audio.currentTime, .12, .035, audio); } catch { /* Audio output is optional feedback. */ } }
+/** A short local keypad tone. Fast macros pass a shorter `length` (seconds) so their tones don't pile up. */
+export function keyTone(key: string, length = .12) { const pair = dtmfPairs[key]; if (!pair) return; try { const audio = context(); play(pair, audio.currentTime, Math.max(.04, length), .035, audio); } catch { /* Audio output is optional feedback. */ } }
 /** Starts a repeating ring and returns a function that stops it. */
 export function ring(): () => void {
   let audio: AudioContext;

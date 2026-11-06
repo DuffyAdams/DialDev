@@ -2,7 +2,7 @@ import type { AppData, Credentials, Pane, Recording } from '../types';
 import { cleanMacros } from './macros';
 const panes: Pane[] = ['history', 'contacts', 'keypad', 'messages', 'activity'];
 const namespace = window.desktop?.storageNamespace || 'dialdev';
-export const defaults: AppData = { version: 1, accounts: [], contacts: [], history: [], messages: [], selectedAccount: '', pane: 'keypad', recentsSeen: 0, macros: [], preferences: { theme: 'system', dnd: false, sounds: true, autoAnswer: false, forward: '', input: '', output: '', camera: '', echoCancellation: true, noiseSuppression: true, callDetails: false, transcribe: true, transcribeLocale: '', captions: false, checkUpdates: true, volume: 1, recordCalls: false } };
+export const defaults: AppData = { version: 1, accounts: [], contacts: [], history: [], messages: [], selectedAccount: '', pane: 'keypad', recentsSeen: 0, macros: [], preferences: { theme: 'system', dnd: false, sounds: true, autoAnswer: false, forward: '', input: '', output: '', camera: '', echoCancellation: true, noiseSuppression: true, callDetails: false, transcribe: true, transcribeLocale: '', captions: false, checkUpdates: true, volume: 1, recordCalls: false, macroTyping: 'normal', macroDtmf: 'normal' } };
 export function loadData(): AppData {
   try {
     const raw = JSON.parse(localStorage.getItem(`${namespace}.v1`) || 'null');

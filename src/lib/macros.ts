@@ -1,11 +1,24 @@
-import type { Macro } from '../types';
+import type { DtmfSpeed, Macro, TypingSpeed } from '../types';
 
 export const MAX_MACROS = 12;
 export const MACRO_NAME_LENGTH = 24;
 export const MACRO_DIGITS_LENGTH = 80;
-/** Time per key while typing into the dial field, and per DTMF digit on a call. A digit needs 230 ms (160 ms tone + 70 ms gap). */
-export const TYPE_INTERVAL = 80;
-export const DTMF_INTERVAL = 260;
+/** Time per key while typing into the dial field. Instant (0) enters every key at once. */
+const typing: Record<TypingSpeed, number> = { slow: 160, normal: 80, fast: 35, instant: 0 };
+export const typingInterval = (speed: unknown) => typeof speed === 'string' && Object.hasOwn(typing, speed) ? typing[speed as TypingSpeed] : typing.normal;
+/**
+ * DTMF tone length and time per digit. 100 ms is the shortest tone used, since some PBXes ignore shorter ones (Asterisk's
+ * default minimum is 80 ms). On WebRTC calls the browser plays each tone for exactly this long. The native engine sends each
+ * RFC 4733 event for its own fixed length (nine 20 ms packets plus three end packets) and queues the rest, so its digits are
+ * never paced faster than that.
+ */
+const dtmf: Record<DtmfSpeed, { tone: number; interval: number }> = { slow: { tone: 200, interval: 450 }, normal: { tone: 160, interval: 260 }, fast: { tone: 100, interval: 160 } };
+export const NATIVE_DTMF_INTERVAL = 240;
+/** The tone, the gap after it and the time per digit. The gap leaves the browser's tone queue idle before the next digit arrives, so no digit replaces one still waiting. */
+export function dtmfTiming(speed: unknown, native: boolean) {
+  const t = typeof speed === 'string' && Object.hasOwn(dtmf, speed) ? dtmf[speed as DtmfSpeed] : dtmf.normal;
+  return { tone: t.tone, gap: Math.max(30, t.interval - t.tone - 20), interval: native ? Math.max(t.interval, NATIVE_DTMF_INTERVAL) : t.interval };
+}
 /** A comma in a macro waits this long. */
 export const PAUSE = 1000;
 
